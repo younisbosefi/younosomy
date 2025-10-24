@@ -1,9 +1,10 @@
 import { GameEvent, GameState, War } from '@/types/game'
 import { countries } from '@/data/countries'
+import { sectorPotentials } from '@/data/sectorPotentials'
 
 let eventIdCounter = 0
 
-function generateEventId(): string {
+export function generateEventId(): string {
   return `event-${Date.now()}-${eventIdCounter++}`
 }
 
@@ -55,6 +56,7 @@ export function generateRandomWorldEvents(state: GameState): GameEvent[] {
   const allianceProbability = 0.01 * speedMultiplier
   const sanctionProbability = 0.005 * speedMultiplier
   const economicEventProbability = 0.015 * speedMultiplier
+  const allyAidProbability = 0.008 * speedMultiplier // ~0.8% chance per day
 
   // Random war between countries
   if (Math.random() < warProbability) {
@@ -78,6 +80,12 @@ export function generateRandomWorldEvents(state: GameState): GameEvent[] {
   if (Math.random() < economicEventProbability) {
     const economicEvent = generateRandomEconomicEvent(state)
     if (economicEvent) events.push(economicEvent)
+  }
+
+  // Random ally aid (only if you have allies)
+  if (state.allies.length > 0 && Math.random() < allyAidProbability) {
+    const allyAidEvent = generateAllyAidEvent(state)
+    if (allyAidEvent) events.push(allyAidEvent)
   }
 
   return events
@@ -125,7 +133,7 @@ function generateRandomWar(state: GameState): GameEvent | null {
     timestamp: new Date(),
     type: 'world',
     category: 'military',
-    message: `⚔️ ${attacker.name} declared war on ${defender.name} ${reason}.${impactMessage}`,
+    message: `${attacker.name} declared war on ${defender.name} ${reason}.${impactMessage}`,
     icon: '⚔️'
   }
 }
@@ -147,24 +155,48 @@ function generateRandomAlliance(state: GameState): GameEvent | null {
   ]
   const reason = reasons[Math.floor(Math.random() * reasons.length)]
 
-  // Check relationships and explain impact
-  let impactMessage = ''
-  const isCountry1Ally = state.allies.includes(country1.id)
-  const isCountry2Ally = state.allies.includes(country2.id)
+  // Check relationships (using new relationship score system)
+  const country1Relationship = state.relationships[country1.id] || 60
+  const country2Relationship = state.relationships[country2.id] || 60
+  const isCountry1Friend = country1Relationship >= 71 // Friendly or Allied
+  const isCountry2Friend = country2Relationship >= 71
   const isCountry1Enemy = state.enemies.includes(country1.id)
   const isCountry2Enemy = state.enemies.includes(country2.id)
 
-  if (isCountry1Ally && isCountry2Ally) {
-    impactMessage = ` Both are your allies - strengthens your alliance network!`
-  } else if (isCountry1Enemy && isCountry2Enemy) {
+  // NEW: Apply relationship impacts based on the alliance!
+  const impact: any = {}
+  let impactMessage = ''
+
+  // Both are your friends - relationship boost!
+  if (isCountry1Friend && isCountry2Friend) {
+    impact.relationshipChanges = {
+      [country1.id]: 2,  // +2 relationship
+      [country2.id]: 2   // +2 relationship
+    }
+    impactMessage = ` Both are your friends - your relationships improve! (+2 with each)`
+  }
+  // Both are enemies - warning message
+  else if (isCountry1Enemy && isCountry2Enemy) {
     impactMessage = ` Your enemies unite - you should strengthen your military!`
-  } else if ((isCountry1Ally && isCountry2Enemy) || (isCountry2Ally && isCountry1Enemy)) {
-    impactMessage = ` Your ally partnered with your enemy - diplomacy is shifting!`
-  } else if (isCountry1Ally || isCountry2Ally) {
-    impactMessage = ` Your ally gains a new partner - this may benefit you.`
-  } else if (isCountry1Enemy || isCountry2Enemy) {
+  }
+  // One friend, one enemy - diplomatic crisis (could trigger decision modal in future)
+  else if ((isCountry1Friend && isCountry2Enemy) || (isCountry2Friend && isCountry1Enemy)) {
+    const friendCountry = isCountry1Friend ? country1.name : country2.name
+    const enemyCountry = isCountry1Enemy ? country1.name : country2.name
+    impactMessage = ` Your friend ${friendCountry} allied with your enemy ${enemyCountry}! Diplomacy is shifting - this complicates your relations.`
+    // Small reputation hit due to complex situation
+    impact.globalReputation = -3
+  }
+  // One friend, one neutral
+  else if (isCountry1Friend || isCountry2Friend) {
+    impactMessage = ` Your friend gains a new ally - this may benefit you.`
+  }
+  // One enemy, one neutral
+  else if (isCountry1Enemy || isCountry2Enemy) {
     impactMessage = ` Your enemy gains a new ally - monitor this carefully.`
-  } else {
+  }
+  // Both neutral
+  else {
     impactMessage = ` This reshapes regional power dynamics.`
   }
 
@@ -174,8 +206,9 @@ function generateRandomAlliance(state: GameState): GameEvent | null {
     timestamp: new Date(),
     type: 'world',
     category: 'diplomatic',
-    message: `🤝 ${country1.name} and ${country2.name} formed an alliance ${reason}.${impactMessage}`,
-    icon: '🤝'
+    message: `${country1.name} and ${country2.name} formed an alliance ${reason}.${impactMessage}`,
+    icon: '🤝',
+    impact: Object.keys(impact).length > 0 ? impact : undefined
   }
 }
 
@@ -221,69 +254,202 @@ function generateRandomSanction(state: GameState): GameEvent | null {
     timestamp: new Date(),
     type: 'world',
     category: 'diplomatic',
-    message: `🚫 ${sanctioner.name} imposed sanctions on ${sanctioned.name} ${reason}.${impactMessage}`,
+    message: `${sanctioner.name} imposed sanctions on ${sanctioned.name} ${reason}.${impactMessage}`,
     icon: '🚫'
   }
 }
 
-function generateRandomEconomicEvent(state: GameState): GameEvent | null {
-  const events = [
-    'Global oil prices surge, affecting economies worldwide.',
-    'Major stock market rally boosts investor confidence.',
-    'International trade agreements signed between multiple nations.',
-    'Global economic forum discusses climate change policies.',
-    'Major tech company announces breakthrough innovation.',
-    'Natural disaster impacts global supply chains.',
-    'International currency fluctuations affect trade.',
-    'Global tourism industry reports record numbers.',
-  ]
+function generateAllyAidEvent(state: GameState): GameEvent | null {
+  // Pick random ally
+  const allyId = state.allies[Math.floor(Math.random() * state.allies.length)]
+  const ally = countries.find(c => c.id === allyId)
+  if (!ally) return null
 
-  const message = events[Math.floor(Math.random() * events.length)]
+  // Aid amount: 5% to 15% of player's GDP
+  const aidPercent = 5 + Math.random() * 10 // 5-15%
+  const aidAmount = state.gdp * (aidPercent / 100)
 
   return {
     id: generateEventId(),
     day: state.currentDay,
     timestamp: new Date(),
-    type: 'world',
-    category: 'economic',
-    message,
-    icon: '📊'
+    type: 'player',
+    category: 'diplomatic',
+    message: `💰 ALLY SUPPORT: ${ally.name} sends $${aidAmount.toFixed(1)}B in aid (${aidPercent.toFixed(1)}% of your GDP)! Your alliance is strong!`,
+    icon: '🤝',
+    impact: {
+      treasury: aidAmount,
+      happiness: 3
+    }
   }
+}
+
+// Format impact changes into readable string
+function formatImpactString(impact: GameEvent['impact']): string {
+  if (!impact) return ''
+
+  const changes: string[] = []
+
+  if (impact.gdpGrowth) {
+    const sign = impact.gdpGrowth > 0 ? '+' : ''
+    changes.push(`GDP Growth ${sign}${impact.gdpGrowth.toFixed(1)}%`)
+  }
+  if (impact.happiness) {
+    const sign = impact.happiness > 0 ? '+' : ''
+    changes.push(`Happiness ${sign}${impact.happiness.toFixed(0)}%`)
+  }
+  if (impact.treasury) {
+    const sign = impact.treasury > 0 ? '+' : ''
+    changes.push(`Treasury ${sign}$${Math.abs(impact.treasury).toFixed(1)}B`)
+  }
+  if (impact.revenue) {
+    const sign = impact.revenue > 0 ? '+' : ''
+    changes.push(`Revenue ${sign}$${Math.abs(impact.revenue).toFixed(2)}B/day`)
+  }
+  if (impact.unemployment) {
+    const sign = impact.unemployment > 0 ? '+' : ''
+    changes.push(`Unemployment ${sign}${impact.unemployment.toFixed(1)}%`)
+  }
+  if (impact.inflation) {
+    const sign = impact.inflation > 0 ? '+' : ''
+    changes.push(`Inflation ${sign}${impact.inflation.toFixed(1)}%`)
+  }
+
+  return changes.length > 0 ? ` [${changes.join(', ')}]` : ''
+}
+
+function generateRandomEconomicEvent(state: GameState): GameEvent | null {
+  // Impactful economic events with varying probabilities based on severity
+  const events = [
+    // VERY RARE (1% chance) - Major positive events
+    {
+      message: '🏆 GLOBAL ECONOMIC BOOM: Major technological breakthrough creates worldwide prosperity!',
+      impact: { gdpGrowth: 0.5, happiness: 10, treasury: state.gdp * 0.02 },
+      probability: 0.01
+    },
+    {
+      message: '💰 GOLD RUSH: Miners strike massive gold deposits! Treasury receives windfall!',
+      impact: { treasury: state.gdp * 0.05, happiness: 5 },
+      probability: 0.01
+    },
+    
+    // RARE (3% chance) - Positive events
+    {
+      message: '📈 STOCK MARKET SURGE: Global markets rally, boosting investor confidence!',
+      impact: { gdpGrowth: 0.2, treasury: state.gdp * 0.01, happiness: 3 },
+      probability: 0.03
+    },
+    {
+      message: '🌍 TRADE AGREEMENT: Major international trade deal signed, boosting exports!',
+      impact: { gdpGrowth: 0.15, revenue: state.revenue * 0.1 },
+      probability: 0.03
+    },
+    {
+      message: '🏭 INDUSTRIAL REVOLUTION: New manufacturing technologies boost productivity!',
+      impact: { gdpGrowth: 0.1, unemployment: -2 },
+      probability: 0.03
+    },
+    
+    // COMMON (8% chance) - Minor positive events
+    {
+      message: '🎯 TOURISM BOOM: Your country becomes a popular destination!',
+      impact: { revenue: state.revenue * 0.05, happiness: 2 },
+      probability: 0.08
+    },
+    {
+      message: '🌱 GREEN ENERGY: Renewable energy investments pay off!',
+      impact: { gdpGrowth: 0.05, happiness: 1 },
+      probability: 0.08
+    },
+    
+    // COMMON (8% chance) - Minor negative events
+    {
+      message: '📉 MARKET CORRECTION: Stock markets experience minor decline.',
+      impact: { gdpGrowth: -0.05, happiness: -1 },
+      probability: 0.08
+    },
+    {
+      message: '🌪️ NATURAL DISASTER: Severe weather disrupts local economy.',
+      impact: { gdpGrowth: -0.1, treasury: -state.gdp * 0.005, happiness: -2 },
+      probability: 0.08
+    },
+    
+    // RARE (3% chance) - Major negative events
+    {
+      message: '💥 ECONOMIC CRISIS: Global financial markets collapse!',
+      impact: { gdpGrowth: -0.3, happiness: -8, treasury: -state.gdp * 0.02 },
+      probability: 0.03
+    },
+    {
+      message: '⚡ ENERGY CRISIS: Oil prices skyrocket, crippling transportation!',
+      impact: { gdpGrowth: -0.2, inflation: 2, happiness: -5 },
+      probability: 0.03
+    },
+    {
+      message: '🏭 INDUSTRIAL ACCIDENT: Major factory disaster disrupts supply chains!',
+      impact: { gdpGrowth: -0.15, unemployment: 3, happiness: -3 },
+      probability: 0.03
+    },
+    
+    // VERY RARE (1% chance) - Catastrophic events
+    {
+      message: '💀 ECONOMIC COLLAPSE: Global depression hits worldwide!',
+      impact: { gdpGrowth: -0.5, happiness: -15, unemployment: 5, inflation: 3 },
+      probability: 0.01
+    }
+  ]
+
+  // Select event based on probability
+  const random = Math.random()
+  let cumulativeProbability = 0
+  
+  for (const event of events) {
+    cumulativeProbability += event.probability
+    if (random < cumulativeProbability) {
+      // Apply the impact to the game state (this will be handled by the game engine)
+      const impactString = formatImpactString(event.impact)
+      return {
+        id: generateEventId(),
+        day: state.currentDay,
+        timestamp: new Date(),
+        type: 'world',
+        category: 'economic',
+        message: event.message + impactString,
+        icon: '📊',
+        impact: event.impact // Store impact data for the game engine to process
+      }
+    }
+  }
+
+  return null
 }
 
 // Check for uprising warnings (ANTI-SPAM: Only warn every 30 days)
 export function checkUprisingWarnings(state: GameState): GameEvent[] {
   const events: GameEvent[] = []
-  const WARNING_COOLDOWN = 30 // Only warn every 30 days
+  const WARNING_COOLDOWN = 90 // Only warn every 90 days
 
-  // Low happiness warning (30-20%)
-  if (state.happiness < 30 && state.happiness > 20) {
+  // Low happiness warning (only when happiness is below 15%)
+  if (state.happiness < 15) {
     const daysSinceLastWarning = state.currentDay - state.lastWarningDay.lowHappiness
     if (daysSinceLastWarning >= WARNING_COOLDOWN || state.lastWarningDay.lowHappiness < 0) {
+      // Calculate uprising probability for display (matches game engine calculation)
+      const uprisingChance = ((15 - state.happiness) / 15) * 2 // Convert to percentage (0-2%)
       events.push({
         id: generateEventId(),
         day: state.currentDay,
         timestamp: new Date(),
         type: 'critical',
         category: 'domestic',
-        message: 'WARNING: Public happiness is dangerously low! Risk of uprising increasing.',
+        message: `⚠️ UPRISING RISK: Happiness critically low at ${state.happiness.toFixed(0)}%! Daily uprising probability: ${uprisingChance.toFixed(2)}%. FIX: Invest in Health, Education, Housing sectors and stop wars.`,
         icon: '⚠️'
       })
     }
   }
 
-  // Uprising progress warning (ALWAYS show this - it's time-critical!)
-  if (state.uprisingProgress > 0 && state.uprisingProgress < 30) {
-    const daysRemaining = 30 - state.uprisingProgress
-    events.push({
-      id: generateEventId(),
-      day: state.currentDay,
-      timestamp: new Date(),
-      type: 'critical',
-      category: 'domestic',
-      message: `UPRISING WARNING: ${daysRemaining} days until revolution if happiness remains below 20!`,
-      icon: '🔥'
-    })
+  // Uprising triggered event (only shown once when uprising actually triggers)
+  if (state.uprisingTriggered) {
+    // This will be handled by a modal in the UI, no event log message needed
   }
 
   // Debt ratio warning
@@ -478,9 +644,48 @@ export function generateEconomicAdvice(state: GameState): GameEvent[] {
     ))
   }
 
+  // WAR WARNINGS - Multiple wars are extremely punishing!
+  if (state.activeWars.length >= 2) {
+    adviceGiven.push(createAdviceEvent(
+      state,
+      `🚨 MILITARY ADVISOR: Fighting ${state.activeWars.length} simultaneous wars is DEVASTATING your economy! Each additional war causes exponential damage. End conflicts immediately or face economic collapse!`,
+      'military'
+    ))
+  } else if (state.activeWars.length === 1 && state.gdpGrowthRate < 2) {
+    adviceGiven.push(createAdviceEvent(
+      state,
+      `⚔️ MILITARY ADVISOR: War is draining your economy (-2% GDP growth per war). Wars reduce happiness significantly. Consider peace if economic situation worsens.`,
+      'military'
+    ))
+  }
+
+  // TOO MANY PAST WARS WARNING
+  if (state.warredCountries.length >= 3 && state.globalReputation < 40) {
+    adviceGiven.push(createAdviceEvent(
+      state,
+      `💀 DIPLOMATIC ADVISOR: You've waged ${state.warredCountries.length} wars! Your global reputation is destroyed (${state.globalReputation.toFixed(0)}). Wars have SEVERE long-term consequences. Build alliances instead!`,
+      'diplomatic'
+    ))
+  }
+
+  // ALLIANCE ENCOURAGEMENT
+  if (state.allies.length === 0 && state.currentDay > 100) {
+    adviceGiven.push(createAdviceEvent(
+      state,
+      `🤝 DIPLOMATIC ADVISOR: You have NO allies! Alliances provide mutual defense, economic support, and strengthen your position. Propose alliances to friendly nations.`,
+      'diplomatic'
+    ))
+  } else if (state.allies.length >= 3) {
+    adviceGiven.push(createAdviceEvent(
+      state,
+      `🤝 DIPLOMATIC ADVISOR: Excellent! You have ${state.allies.length} allies. Strong alliances deter aggression and provide economic opportunities. Continue building relationships!`,
+      'diplomatic'
+    ))
+  }
+
   // BAD SECTOR INVESTMENT ADVICE (check country-specific potentials)
-  if (state.country && state.country.sectorPotentials) {
-    const countryPotentials = state.country.sectorPotentials
+  const countryPotentials = sectorPotentials[state.country.id]
+  if (countryPotentials) {
     if (countryPotentials.agriculture === 'very-low' && state.sectorLevels.agriculture > 25) {
       adviceGiven.push(createAdviceEvent(
         state,
@@ -596,16 +801,19 @@ export function generateWarBattleEvents(state: GameState): GameEvent[] {
         })
       }
     } else {
-      // Late war - final pushes
-      events.push({
-        id: generateEventId(),
-        day: state.currentDay,
-        timestamp: new Date(),
-        type: 'player',
-        category: 'military',
-        message: `War with ${enemyCountry} nearing conclusion. Final battles underway...`,
-        icon: '🏁'
-      })
+      // Late war - final pushes (only show occasionally to avoid spam)
+      if (Math.random() < 0.1) { // 10% chance in final phase
+        const finalMsg = battleEvents.victories[Math.floor(Math.random() * battleEvents.victories.length)]
+        events.push({
+          id: generateEventId(),
+          day: state.currentDay,
+          timestamp: new Date(),
+          type: 'player',
+          category: 'military',
+          message: `War with ${enemyCountry} nearing conclusion. Your forces ${finalMsg}!`,
+          icon: '🏁'
+        })
+      }
     }
   })
 

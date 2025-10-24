@@ -1,4 +1,3 @@
-// Format large numbers with suffixes (K, M, B, T, Q)
 export function formatNumber(num: number): string {
   if (num === 0) return '0'
   if (isNaN(num)) return '0'
@@ -27,12 +26,10 @@ export function formatNumber(num: number): string {
   }
 }
 
-// Format currency with $ sign
 export function formatCurrency(num: number): string {
   return '$' + formatNumber(num)
 }
 
-// Calculate percentage of a base value
 export function calculatePercentage(base: number, percentage: number): number {
   return (base * percentage) / 100
 }

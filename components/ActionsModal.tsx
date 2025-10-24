@@ -270,25 +270,7 @@ function DomesticActions({ gameState, onAction, onClose }: Omit<ActionsModalProp
         </button>
       </div>
 
-      {/* Repress Uprising (only if uprising) */}
-      {gameState.isUprising && (
-        <div className="game-panel bg-red-500/20 border-2 border-red-500 p-4">
-          <h3 className="font-semibold mb-2 text-red-400">⚠️ SUPPRESS UPRISING</h3>
-          <p className="text-sm mb-3">
-            Success Chance: {(gameState.militaryStrength * 0.4 + gameState.security * 0.6).toFixed(0)}%
-          </p>
-          <button
-            onClick={() => {
-              const result = gameActions.repressUprising(gameState)
-              onAction(result)
-              onClose()
-            }}
-            className="w-full py-2 bg-red-600 rounded hover:bg-red-700"
-          >
-            Attempt Suppression
-          </button>
-        </div>
-      )}
+      {/* Repress Uprising removed - now handled via modal */}
     </div>
   )
 }
@@ -326,7 +308,6 @@ function ForeignActions({ gameState, onAction, onClose }: Omit<ActionsModalProps
               onClose()
             }}
             className="w-full py-3 bg-red-600 rounded hover:bg-red-700"
-            disabled={gameState.treasury < 50}
           >
             ⚔️ Declare War (Cost: $100B)
           </button>

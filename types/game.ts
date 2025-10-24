@@ -20,9 +20,10 @@ export interface GameState {
     borrowIMF: number
     declareWar: number
     adjustTaxes: number
+    requestAid: number
   }
 
-  // Initial Stats (for relative happiness calculation)
+  // Initial Stats (for relative calculation - ONLY PUNISH WHEN WORSE THAN START!)
   initialStats: {
     gdp: number
     happiness: number
@@ -30,6 +31,9 @@ export interface GameState {
     inflation: number
     security: number
     militaryStrength: number
+    debt: number
+    debtToGdpRatio: number
+    sectorLevels: SectorLevels
   }
 
   // Core Economic Stats
@@ -59,11 +63,14 @@ export interface GameState {
   score: number
   previousScore: number
 
-  // Relations
-  allies: string[] // country IDs
-  enemies: string[] // country IDs
+  // Relationship System: scores from 0-100 per country
+  // 0-30: Hostile | 31-50: Cold | 51-70: Neutral | 71-85: Friendly | 86-100: Allied
+  relationships: Record<string, number>
+  allies: string[]
+  enemies: string[]
   sanctionsOnUs: string[] // country IDs sanctioning us
   cumulativeAid: Record<string, number> // Track total aid sent to each country (in billions)
+  warredCountries: string[] // Countries we've declared war on (can only war each once)
 
   // Sector Investments
   sectorLevels: SectorLevels
@@ -71,9 +78,12 @@ export interface GameState {
   // Special States
   isInWar: boolean
   activeWars: War[]
-  uprisingProgress: number // 0-30 days of low happiness
-  isUprising: boolean
+  uprisingTriggered: boolean
+  previousHappiness: number
   hasDefaulted: boolean
+  pendingWarResult?: { playerWon: boolean; enemyName: string } | null
+  recentPrintMoneyCount: number
+  pendingDecisions: Decision[]
 
   // Warning Tracking (to prevent spam - only warn every 30 days)
   lastWarningDay: {
@@ -147,6 +157,16 @@ export interface GameEvent {
   category: 'economic' | 'military' | 'diplomatic' | 'domestic' | 'system'
   message: string
   icon?: string
+  impact?: {
+    gdpGrowth?: number
+    happiness?: number
+    treasury?: number
+    revenue?: number
+    unemployment?: number
+    inflation?: number
+    globalReputation?: number
+    relationshipChanges?: Record<string, number>
+  }
 }
 
 export type ActionType =
@@ -170,9 +190,21 @@ export interface ActionResult {
   stateChanges: Partial<GameState>
 }
 
-export interface GlobalEventBid {
-  eventType: 'world-cup' | 'olympics'
-  year: number
-  bidAmount: number
-  participants: { countryId: string; bidAmount: number }[]
+export interface DecisionChoice {
+  label: string
+  description: string
+  outcomes: {
+    success: number
+    successEffect: Partial<GameState> & { message: string }
+    failureEffect?: Partial<GameState> & { message: string }
+  }
+}
+
+export interface Decision {
+  id: string
+  title: string
+  description: string
+  icon: string
+  choices: DecisionChoice[]
+  urgency: 'low' | 'medium' | 'high' | 'critical'
 }

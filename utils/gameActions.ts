@@ -2,6 +2,7 @@ import { GameState, ActionResult, BorrowedLoan, War } from '@/types/game'
 import { calculateLoanPayment, calculateSectorSpendingEffect, calculateRepressSuccessChance } from './gameCalculations'
 import { createPlayerEvent, createCriticalEvent } from './eventGenerator'
 import { countries } from '@/data/countries'
+import { changeRelationship, getRelationshipLevel, getProvocationConsequences } from './relationshipSystem'
 
 // Adjust Interest Rate
 export function adjustInterestRate(state: GameState, newRate: number): ActionResult {
@@ -24,7 +25,7 @@ export function adjustInterestRate(state: GameState, newRate: number): ActionRes
   }
 }
 
-// Print Money
+// Print Money - ESCALATING CONSEQUENCES!
 export function printMoney(state: GameState, amount: number): ActionResult {
   // Check cooldown (30 days)
   if (state.cooldowns.printMoney > 0) {
@@ -45,22 +46,53 @@ export function printMoney(state: GameState, amount: number): ActionResult {
     }
   }
 
-  const inflationIncrease = (amount / state.gdp) * 10
+  // ESCALATING CONSEQUENCES based on recent usage!
+  const printCount = state.recentPrintMoneyCount
+  const escalationMultiplier = 1 + (printCount * 0.5) // 1x, 1.5x, 2x, 2.5x...
+
+  const baseInflationIncrease = (amount / state.gdp) * 10
+  const inflationIncrease = baseInflationIncrease * escalationMultiplier
+
+  // Additional punishments for repeated money printing
+  let happinessPenalty = 0
+  let reputationPenalty = 0
+  let gdpPenalty = 0
+  let message = ''
+
+  if (printCount === 0) {
+    message = `Printed money but inflation increased by ${inflationIncrease.toFixed(1)}%!`
+  } else if (printCount === 1) {
+    happinessPenalty = -5
+    message = `Printed money AGAIN! Inflation +${inflationIncrease.toFixed(1)}%, citizens losing confidence (-5 happiness)`
+  } else if (printCount === 2) {
+    happinessPenalty = -10
+    reputationPenalty = -10
+    message = `⚠️ RECKLESS MONEY PRINTING! Inflation +${inflationIncrease.toFixed(1)}%, currency devaluing (-10 happiness, -10 reputation)`
+  } else {
+    happinessPenalty = -15
+    reputationPenalty = -20
+    gdpPenalty = 0.05 // -5% GDP!
+    message = `🚨 HYPERINFLATION RISK! Excessive money printing destroying currency! Inflation +${inflationIncrease.toFixed(1)}%, -5% GDP, -15 happiness, -20 reputation!`
+  }
 
   return {
     success: true,
-    message: `Printed money but inflation increased significantly!`,
+    message,
     events: [
       createPlayerEvent(
         state,
-        `You printed money. Treasury increased but inflation spiked by ${inflationIncrease.toFixed(1)}%!`,
+        message,
         'economic',
-        '💵'
+        printCount >= 3 ? '🚨' : printCount >= 2 ? '⚠️' : '💵'
       )
     ],
     stateChanges: {
       treasury: state.treasury + amount,
       inflationRate: state.inflationRate + inflationIncrease,
+      happiness: state.happiness + happinessPenalty,
+      globalReputation: state.globalReputation + reputationPenalty,
+      gdp: state.gdp * (1 - gdpPenalty),
+      recentPrintMoneyCount: printCount + 1,
       cooldowns: {
         ...state.cooldowns,
         printMoney: 30 // 30-day cooldown
@@ -228,9 +260,7 @@ export function spendOnSector(
     sectorLevels: newSectorLevels,
     happiness: state.happiness + effect.happinessChange,
     gdpGrowthRate: state.gdpGrowthRate + effect.gdpGrowthBoost,
-    // NEW: Revenue boost from tourism/sports/transport
     revenue: state.revenue + effect.revenueBoost,
-    // NEW: Unemployment reduction from education/health/infrastructure
     unemploymentRate: Math.max(1, state.unemploymentRate - effect.unemploymentReduction)
   }
 
@@ -259,59 +289,7 @@ export function spendOnSector(
   }
 }
 
-// Repress Uprising
-export function repressUprising(state: GameState): ActionResult {
-  if (!state.isUprising) {
-    return {
-      success: false,
-      message: 'No uprising to repress',
-      events: [],
-      stateChanges: {}
-    }
-  }
-
-  const successChance = calculateRepressSuccessChance(state.militaryStrength, state.security)
-  const success = Math.random() < successChance
-
-  if (success) {
-    return {
-      success: true,
-      message: 'Uprising suppressed successfully!',
-      events: [
-        createPlayerEvent(
-          state,
-          'You successfully suppressed the uprising. Peace restored, but at what cost?',
-          'domestic',
-          '🛡️'
-        )
-      ],
-      stateChanges: {
-        isUprising: false,
-        uprisingProgress: 0,
-        happiness: state.happiness - 5, // Repression hurts happiness
-        globalReputation: state.globalReputation - 10
-      }
-    }
-  } else {
-    return {
-      success: false,
-      message: 'Repression failed! Uprising escalating!',
-      events: [
-        createCriticalEvent(
-          state,
-          'FAILURE: Repression attempt failed! Revolution is imminent!',
-          'domestic'
-        )
-      ],
-      stateChanges: {
-        uprisingProgress: 30, // Immediate overthrow
-        militaryStrength: state.militaryStrength * 0.7 // Military weakened
-      }
-    }
-  }
-}
-
-// Declare War (now with relationship-based costs and validation)
+// Declare War 
 export function declareWar(state: GameState, targetCountryId: string): ActionResult {
   const target = countries.find(c => c.id === targetCountryId)
   if (!target) {
@@ -359,13 +337,29 @@ export function declareWar(state: GameState, targetCountryId: string): ActionRes
     }
   }
 
+  // Already warred check
+  if (state.warredCountries.includes(targetCountryId)) {
+    return {
+      success: false,
+      message: `You have already fought a war with ${target.name}!`,
+      events: [
+        createCriticalEvent(
+          state,
+          `⚔️ Cannot declare war on ${target.name}! You have already fought a war with them. You cannot war the same country twice.`,
+          'military'
+        )
+      ],
+      stateChanges: {}
+    }
+  }
+
   // EASIER REQUIREMENTS FOR ENEMIES
-  const minMilitaryStrength = isEnemy ? 25 : 40
-  const minSecurity = isEnemy ? 20 : 35
-  const minMilitaryLevel = isEnemy ? 15 : 30
-  const warCostPercent = isEnemy ? 0.05 : 0.20 // 5% for enemies, 20% for neutrals
+  const minMilitaryStrength = isEnemy ? 15 : 30
+  const minSecurity = isEnemy ? 15 : 25
+  const minMilitaryLevel = isEnemy ? 10 : 20
+  const warCostPercent = isEnemy ? 0.02 : 0.08 // 2% for enemies, 8% for neutrals
   const warCost = state.gdp * warCostPercent
-  const happinessCost = isEnemy ? 3 : 15 // Much bigger happiness hit for attacking neutrals
+  const happinessCost = isEnemy ? 3 : 10 // Happiness hit for attacking
 
   // Requirements checks with detailed messages
   if (state.militaryStrength < minMilitaryStrength) {
@@ -375,7 +369,7 @@ export function declareWar(state: GameState, targetCountryId: string): ActionRes
       events: [
         createCriticalEvent(
           state,
-          `⚔️ Cannot declare war on ${target.name}! Military strength too weak: ${state.militaryStrength.toFixed(0)}% (need ${minMilitaryStrength}%). ${isNeutral ? 'Attacking neutrals requires stronger military!' : 'Invest in military sector to increase strength.'}`,
+          `⚔️ WAR BLOCKED: Cannot declare war on ${target.name}! Military strength too weak: ${state.militaryStrength.toFixed(0)}% (need ${minMilitaryStrength}%). ${isNeutral ? 'Attacking neutrals requires stronger military!' : 'Invest in military sector to increase strength.'}`,
           'military'
         )
       ],
@@ -390,7 +384,7 @@ export function declareWar(state: GameState, targetCountryId: string): ActionRes
       events: [
         createCriticalEvent(
           state,
-          `⚔️ Cannot declare war on ${target.name}! Domestic security too low: ${state.security.toFixed(0)}% (need ${minSecurity}%). Strengthen security sector before going to war.`,
+          `⚔️ WAR BLOCKED: Cannot declare war on ${target.name}! Domestic security too low: ${state.security.toFixed(0)}% (need ${minSecurity}%). Strengthen security sector before going to war.`,
           'military'
         )
       ],
@@ -405,7 +399,7 @@ export function declareWar(state: GameState, targetCountryId: string): ActionRes
       events: [
         createCriticalEvent(
           state,
-          `⚔️ Cannot declare war on ${target.name}! Military infrastructure insufficient: Level ${state.sectorLevels.military.toFixed(0)} (need Level ${minMilitaryLevel}). Build up military sector first.`,
+          `⚔️ WAR BLOCKED: Cannot declare war on ${target.name}! Military infrastructure insufficient: Level ${state.sectorLevels.military.toFixed(0)} (need Level ${minMilitaryLevel}). Build up military sector first.`,
           'military'
         )
       ],
@@ -420,7 +414,7 @@ export function declareWar(state: GameState, targetCountryId: string): ActionRes
       events: [
         createCriticalEvent(
           state,
-          `⚔️ Cannot declare war on ${target.name}! Insufficient treasury: $${state.treasury.toFixed(2)}B (need ${(warCostPercent * 100).toFixed(0)}% of GDP: $${warCost.toFixed(2)}B). ${isNeutral ? 'Wars against neutrals are VERY expensive!' : 'Wars are expensive!'}`,
+          `⚔️ WAR BLOCKED: Cannot declare war on ${target.name}! Insufficient treasury: $${state.treasury.toFixed(2)}B (need ${(warCostPercent * 100).toFixed(0)}% of GDP: $${warCost.toFixed(2)}B). ${isNeutral ? 'Wars against neutrals are VERY expensive!' : 'Wars are expensive!'}`,
           'military'
         )
       ],
@@ -428,8 +422,17 @@ export function declareWar(state: GameState, targetCountryId: string): ActionRes
     }
   }
 
-  // Fixed 30-day war duration
-  const duration = 30
+  // Get current relationship and calculate provocation consequences
+  const currentRelationship = state.relationships[targetCountryId] || 60
+  const currentLevel = getRelationshipLevel(currentRelationship)
+  const consequences = getProvocationConsequences(currentRelationship, state)
+
+  // Reduce relationship by -40 (war is severe!)
+  const newRelationships = changeRelationship(state.relationships, targetCountryId, -40)
+  const newLevel = getRelationshipLevel(newRelationships[targetCountryId])
+
+  // random from 20 to 50 days
+  const duration = Math.floor(Math.random() * (50 - 20 + 1)) + 20;
 
   const newWar: War = {
     id: `war-${Date.now()}`,
@@ -447,9 +450,22 @@ export function declareWar(state: GameState, targetCountryId: string): ActionRes
     ? state.enemies
     : [...state.enemies, targetCountryId]
 
+  const isFriendly = currentRelationship >= 51 // Neutral or better
   const relationshipMessage = isEnemy
     ? 'Your people support this war against a known enemy.'
     : 'Your people are shocked by this unprovoked aggression!'
+
+  // Provocation message if attacking friend/neutral
+  const provocationMessage = isFriendly ? ` ${consequences.message}` : ''
+
+  // Reputation penalty increases with each war
+  const numWars = state.warredCountries.length
+  const baseReputationLoss = isEnemy ? 10 : 25
+  const multipleWarsPenalty = numWars * 5 // Each previous war adds 5 more reputation loss
+  const totalReputationLoss = baseReputationLoss + multipleWarsPenalty + consequences.reputationLoss
+
+  // Apply provocation consequences
+  const totalHappinessLoss = happinessCost + consequences.happinessLoss
 
   return {
     success: true,
@@ -457,18 +473,24 @@ export function declareWar(state: GameState, targetCountryId: string): ActionRes
     events: [
       createPlayerEvent(
         state,
-        `You declared war on ${target.name}! War will last 30 days. ${relationshipMessage}`,
+        `You declared war on ${target.name}! War will last ${duration} days. ${relationshipMessage}${provocationMessage} Relationship -40 (now ${newRelationships[targetCountryId].toFixed(0)}/100 - ${newLevel})${numWars > 0 ? ` (This is your ${numWars + 1}${numWars === 0 ? 'st' : numWars === 1 ? 'nd' : numWars === 2 ? 'rd' : 'th'} war - reputation hit: -${totalReputationLoss})` : ''}`,
         'military',
-        '⚔️'
+        isFriendly ? '🚨' : '⚔️'
       )
     ],
     stateChanges: {
+      relationships: newRelationships,
       treasury: state.treasury - warCost,
       isInWar: true,
       activeWars: [...state.activeWars, newWar],
       enemies: newEnemies,
-      globalReputation: state.globalReputation - (isEnemy ? 10 : 25), // Bigger reputation hit for attacking neutrals
-      happiness: state.happiness - happinessCost,
+      warredCountries: [...state.warredCountries, targetCountryId], // Track this war
+      sectorLevels: {
+        ...state.sectorLevels,
+        tourism: Math.max(0, state.sectorLevels.tourism - consequences.tourismLoss) // Tourism hit from provocation
+      },
+      globalReputation: state.globalReputation - totalReputationLoss,
+      happiness: state.happiness - totalHappinessLoss,
       cooldowns: {
         ...state.cooldowns,
         declareWar: isEnemy ? 90 : 180 // Shorter cooldown for attacking enemies
@@ -493,12 +515,28 @@ export function imposeSanction(state: GameState, targetCountryId: string): Actio
     return {
       success: false,
       message: 'Already sanctioning this country',
-      events: [],
+      events: [
+        createCriticalEvent(
+          state,
+          `🚫 SANCTION BLOCKED: Cannot sanction ${target.name}! You are already sanctioning this country.`,
+          'diplomatic'
+        )
+      ],
       stateChanges: {}
     }
   }
 
+  // Get current relationship and calculate consequences
+  const currentRelationship = state.relationships[targetCountryId] || 60
+  const currentLevel = getRelationshipLevel(currentRelationship)
+  const consequences = getProvocationConsequences(currentRelationship, state)
+
+  // Reduce relationship by -20
+  const newRelationships = changeRelationship(state.relationships, targetCountryId, -20)
+  const newLevel = getRelationshipLevel(newRelationships[targetCountryId])
+
   const isAlly = state.allies.includes(targetCountryId)
+  const isFriendly = currentRelationship >= 71 // Friendly or Allied
   const newEnemies = [...state.enemies, targetCountryId]
   const newAllies = isAlly ? state.allies.filter(id => id !== targetCountryId) : state.allies
 
@@ -506,22 +544,32 @@ export function imposeSanction(state: GameState, targetCountryId: string): Actio
     ? ` This breaks your alliance with ${target.name}! They are now your enemy.`
     : ''
 
+  // Apply provocation consequences if attacking friend/ally
+  const provocationMessage = isFriendly ? ` ${consequences.message}` : ''
+  const totalHappinessLoss = (isAlly ? 5 : 0) + consequences.happinessLoss
+  const totalReputationLoss = (isAlly ? 15 : 5) + consequences.reputationLoss
+
   return {
     success: true,
     message: `Sanctions imposed on ${target.name}`,
     events: [
       createPlayerEvent(
         state,
-        `You imposed economic sanctions on ${target.name}.${allyMessage}`,
+        `You imposed economic sanctions on ${target.name}.${allyMessage}${provocationMessage} Relationship -20 (now ${newRelationships[targetCountryId].toFixed(0)}/100 - ${newLevel})`,
         'diplomatic',
-        '🚫'
+        isFriendly ? '🚨' : '🚫'
       )
     ],
     stateChanges: {
+      relationships: newRelationships,
       enemies: newEnemies,
       allies: newAllies,
-      globalReputation: state.globalReputation - (isAlly ? 15 : 5), // Bigger reputation hit for betraying allies
-      happiness: state.happiness - (isAlly ? 5 : 0) // People don't like betraying allies
+      sectorLevels: {
+        ...state.sectorLevels,
+        tourism: Math.max(0, state.sectorLevels.tourism - consequences.tourismLoss) // Tourism hit from provocation
+      },
+      globalReputation: state.globalReputation - totalReputationLoss,
+      happiness: state.happiness - totalHappinessLoss
     }
   }
 }
@@ -542,7 +590,13 @@ export function proposeAlliance(state: GameState, targetCountryId: string): Acti
     return {
       success: false,
       message: 'Already allied with this country',
-      events: [],
+      events: [
+        createCriticalEvent(
+          state,
+          `🤝 ALLIANCE BLOCKED: Cannot propose alliance to ${target.name}! You are already allied with this country.`,
+          'diplomatic'
+        )
+      ],
       stateChanges: {}
     }
   }
@@ -551,7 +605,13 @@ export function proposeAlliance(state: GameState, targetCountryId: string): Acti
     return {
       success: false,
       message: 'Cannot ally with an enemy',
-      events: [],
+      events: [
+        createCriticalEvent(
+          state,
+          `🤝 ALLIANCE BLOCKED: Cannot propose alliance to ${target.name}! You cannot ally with an enemy. Send aid to improve relations first.`,
+          'diplomatic'
+        )
+      ],
       stateChanges: {}
     }
   }
@@ -583,11 +643,10 @@ export function proposeAlliance(state: GameState, targetCountryId: string): Acti
       success: false,
       message: `${target.name} rejected your alliance proposal`,
       events: [
-        createPlayerEvent(
+        createCriticalEvent(
           state,
-          `${target.name} rejected your alliance proposal. Try improving your global reputation.`,
-          'diplomatic',
-          '❌'
+          `🤝 ALLIANCE REJECTED: ${target.name} rejected your alliance proposal! Your global reputation is ${state.globalReputation.toFixed(0)}% (need higher reputation for alliances). Try sending aid to improve relations first.`,
+          'diplomatic'
         )
       ],
       stateChanges: {
@@ -679,5 +738,390 @@ export function sendAid(state: GameState, targetCountryId: string, amount: numbe
       )
     ],
     stateChanges
+  }
+}
+
+export function requestAid(state: GameState, targetCountryId: string): ActionResult {
+  // Check cooldown
+  if (state.cooldowns.requestAid > 0) {
+    return {
+      success: false,
+      message: `Cannot request aid yet. Cooldown: ${Math.ceil(state.cooldowns.requestAid)} days remaining`,
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const target = countries.find(c => c.id === targetCountryId)
+  if (!target) {
+    return {
+      success: false,
+      message: 'Invalid target country',
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const isEnemy = state.enemies.includes(targetCountryId)
+  const isAlly = state.allies.includes(targetCountryId)
+
+  // Calculate acceptance chance based on relationship
+  let acceptanceChance = 0
+  if (isAlly) {
+    acceptanceChance = 0.20 // 20% for allies
+  } else if (isEnemy) {
+    acceptanceChance = 0.005 // 0.5% for enemies (for the lols)
+  } else {
+    acceptanceChance = 0.10 // 10% for neutrals
+  }
+
+  const accepted = Math.random() < acceptanceChance
+
+  if (accepted) {
+    // Aid amount: 5% to 15% of player's GDP
+    const aidPercent = 5 + Math.random() * 10 // 5-15%
+    const aidAmount = state.gdp * (aidPercent / 100)
+
+    return {
+      success: true,
+      message: `${target.name} accepted! Received $${aidAmount.toFixed(1)}B`,
+      events: [
+        createPlayerEvent(
+          state,
+          `💰 AID RECEIVED: ${target.name} sends $${aidAmount.toFixed(1)}B in aid (${aidPercent.toFixed(1)}% of your GDP)!`,
+          'diplomatic',
+          '🤝'
+        )
+      ],
+      stateChanges: {
+        treasury: state.treasury + aidAmount,
+        happiness: 5,
+        globalReputation: state.globalReputation + 3,
+        cooldowns: {
+          ...state.cooldowns,
+          requestAid: 100 // 100 day cooldown
+        }
+      }
+    }
+  } else {
+    return {
+      success: false,
+      message: `${target.name} declined your aid request`,
+      events: [
+        createPlayerEvent(
+          state,
+          `❌ AID DECLINED: ${target.name} has declined your request for aid.`,
+          'diplomatic',
+          '❌'
+        )
+      ],
+      stateChanges: {
+        globalReputation: state.globalReputation - 1,
+        cooldowns: {
+          ...state.cooldowns,
+          requestAid: 100 // Cooldown applies even if declined
+        }
+      }
+    }
+  }
+}
+
+export function culturalExchange(state: GameState, targetCountryId: string): ActionResult {
+  const target = countries.find(c => c.id === targetCountryId)
+  if (!target) {
+    return {
+      success: false,
+      message: 'Invalid target country',
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const cost = state.treasury * 0.02 // 2% of treasury
+  if (state.treasury < cost) {
+    return {
+      success: false,
+      message: `Insufficient funds! Need $${cost.toFixed(2)}B (2% of treasury)`,
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const currentRelationship = state.relationships[targetCountryId] || 60
+  const newRelationships = changeRelationship(state.relationships, targetCountryId, 5)
+  const newLevel = getRelationshipLevel(newRelationships[targetCountryId])
+
+  return {
+    success: true,
+    message: `Cultural exchange with ${target.name}`,
+    events: [
+      createPlayerEvent(
+        state,
+        `🎭 CULTURAL EXCHANGE: Hosted cultural festival with ${target.name}. Relationship +5 (now ${newRelationships[targetCountryId].toFixed(0)}/100 - ${newLevel})`,
+        'diplomatic',
+        '🎭'
+      )
+    ],
+    stateChanges: {
+      treasury: state.treasury - cost,
+      relationships: newRelationships,
+      happiness: state.happiness + 1 // Citizens enjoy cultural exchange
+    }
+  }
+}
+
+export function tradeAgreement(state: GameState, targetCountryId: string): ActionResult {
+  const target = countries.find(c => c.id === targetCountryId)
+  if (!target) {
+    return {
+      success: false,
+      message: 'Invalid target country',
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const cost = state.treasury * 0.05 // 5% of treasury
+  if (state.treasury < cost) {
+    return {
+      success: false,
+      message: `Insufficient funds! Need $${cost.toFixed(2)}B (5% of treasury)`,
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const currentRelationship = state.relationships[targetCountryId] || 60
+  const newRelationships = changeRelationship(state.relationships, targetCountryId, 8)
+  const newLevel = getRelationshipLevel(newRelationships[targetCountryId])
+
+  return {
+    success: true,
+    message: `Trade agreement signed with ${target.name}`,
+    events: [
+      createPlayerEvent(
+        state,
+        `📜 TRADE AGREEMENT: Signed free trade pact with ${target.name}. Relationship +8 (now ${newRelationships[targetCountryId].toFixed(0)}/100 - ${newLevel}), GDP growth +0.5%`,
+        'diplomatic',
+        '📜'
+      )
+    ],
+    stateChanges: {
+      treasury: state.treasury - cost,
+      relationships: newRelationships,
+      gdpGrowthRate: state.gdpGrowthRate + 0.5, // +0.5% GDP growth
+      happiness: state.happiness + 2
+    }
+  }
+}
+
+export function militaryCooperation(state: GameState, targetCountryId: string): ActionResult {
+  const target = countries.find(c => c.id === targetCountryId)
+  if (!target) {
+    return {
+      success: false,
+      message: 'Invalid target country',
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const currentRelationship = state.relationships[targetCountryId] || 60
+
+  // Require at least 70 relationship (Friendly)
+  if (currentRelationship < 70) {
+    return {
+      success: false,
+      message: `${target.name} refuses! Relationship too low (${currentRelationship.toFixed(0)}/100, need 70+)`,
+      events: [
+        createCriticalEvent(
+          state,
+          `🛡️ COOPERATION DENIED: ${target.name} rejected military cooperation! Relationship: ${currentRelationship.toFixed(0)}/100 (need 70+ Friendly). Improve relations first!`,
+          'military'
+        )
+      ],
+      stateChanges: {}
+    }
+  }
+
+  const newRelationships = changeRelationship(state.relationships, targetCountryId, 10)
+  const newLevel = getRelationshipLevel(newRelationships[targetCountryId])
+
+  return {
+    success: true,
+    message: `Military cooperation pact with ${target.name}`,
+    events: [
+      createPlayerEvent(
+        state,
+        `🛡️ MILITARY COOPERATION: Signed defense pact with ${target.name}. Joint military exercises! Relationship +10 (now ${newRelationships[targetCountryId].toFixed(0)}/100 - ${newLevel}), Military strength +5`,
+        'military',
+        '🛡️'
+      )
+    ],
+    stateChanges: {
+      relationships: newRelationships,
+      militaryStrength: Math.min(100, state.militaryStrength + 5),
+      security: Math.min(100, state.security + 3)
+    }
+  }
+}
+
+export function denouncePublicly(state: GameState, targetCountryId: string): ActionResult {
+  const target = countries.find(c => c.id === targetCountryId)
+  if (!target) {
+    return {
+      success: false,
+      message: 'Invalid target country',
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const currentRelationship = state.relationships[targetCountryId] || 60
+  const newRelationships = changeRelationship(state.relationships, targetCountryId, -15)
+  const newLevel = getRelationshipLevel(newRelationships[targetCountryId])
+
+  // Find countries that are enemies of the target (relationship < 30)
+  const targetEnemies = Object.entries(state.relationships)
+    .filter(([countryId, score]) => {
+      const targetRel = state.relationships[targetCountryId] || 60
+      // Countries that have bad relationship with target
+      return countryId !== targetCountryId && score < 40
+    })
+    .length
+
+  const reputationBoost = Math.min(10, targetEnemies * 2) // +2 rep per enemy of target, max +10
+
+  return {
+    success: true,
+    message: `Publicly denounced ${target.name}`,
+    events: [
+      createPlayerEvent(
+        state,
+        `📢 PUBLIC DENOUNCEMENT: You condemned ${target.name} on the world stage! Relationship -15 (now ${newRelationships[targetCountryId].toFixed(0)}/100 - ${newLevel}), Reputation +${reputationBoost} with their rivals`,
+        'diplomatic',
+        '📢'
+      )
+    ],
+    stateChanges: {
+      relationships: newRelationships,
+      globalReputation: state.globalReputation + reputationBoost,
+      happiness: state.happiness - 2 // Citizens worried about escalation
+    }
+  }
+}
+
+export function espionageMission(state: GameState, targetCountryId: string): ActionResult {
+  const target = countries.find(c => c.id === targetCountryId)
+  if (!target) {
+    return {
+      success: false,
+      message: 'Invalid target country',
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const cost = state.treasury * 0.03 // 3% of treasury for operation
+  if (state.treasury < cost) {
+    return {
+      success: false,
+      message: `Insufficient funds! Need $${cost.toFixed(2)}B (3% of treasury)`,
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  // 60% success rate
+  const success = Math.random() < 0.60
+
+  if (success) {
+    // Mission success - gain intelligence and military advantage
+    return {
+      success: true,
+      message: `Espionage mission against ${target.name} succeeded!`,
+      events: [
+        createPlayerEvent(
+          state,
+          `🕵️ ESPIONAGE SUCCESS: Intelligence gathered on ${target.name}! Gained military insights and economic data. Security +5, Military +3`,
+          'military',
+          '🕵️'
+        )
+      ],
+      stateChanges: {
+        treasury: state.treasury - cost,
+        security: Math.min(100, state.security + 5),
+        militaryStrength: Math.min(100, state.militaryStrength + 3),
+        globalReputation: state.globalReputation + 2 // Secret success
+      }
+    }
+  } else {
+    // Mission failed - caught! Major diplomatic incident
+    const currentRelationship = state.relationships[targetCountryId] || 60
+    const newRelationships = changeRelationship(state.relationships, targetCountryId, -20)
+    const newLevel = getRelationshipLevel(newRelationships[targetCountryId])
+
+    return {
+      success: false,
+      message: `Espionage mission CAUGHT! Diplomatic crisis!`,
+      events: [
+        createCriticalEvent(
+          state,
+          `🚨 ESPIONAGE EXPOSED: Your spies were caught by ${target.name}! International scandal! Relationship -20 (now ${newRelationships[targetCountryId].toFixed(0)}/100 - ${newLevel}), Reputation -15, Happiness -8`,
+          'military'
+        )
+      ],
+      stateChanges: {
+        treasury: state.treasury - cost,
+        relationships: newRelationships,
+        globalReputation: Math.max(0, state.globalReputation - 15),
+        happiness: Math.max(0, state.happiness - 8)
+      }
+    }
+  }
+}
+
+export function borderAgreement(state: GameState, targetCountryId: string): ActionResult {
+  const target = countries.find(c => c.id === targetCountryId)
+  if (!target) {
+    return {
+      success: false,
+      message: 'Invalid target country',
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const cost = state.treasury * 0.01 // 1% of treasury
+  if (state.treasury < cost) {
+    return {
+      success: false,
+      message: `Insufficient funds! Need $${cost.toFixed(2)}B (1% of treasury)`,
+      events: [],
+      stateChanges: {}
+    }
+  }
+
+  const currentRelationship = state.relationships[targetCountryId] || 60
+  const newRelationships = changeRelationship(state.relationships, targetCountryId, 3)
+  const newLevel = getRelationshipLevel(newRelationships[targetCountryId])
+
+  return {
+    success: true,
+    message: `Border agreement signed with ${target.name}`,
+    events: [
+      createPlayerEvent(
+        state,
+        `🗺️ BORDER AGREEMENT: Peacefully resolved territorial disputes with ${target.name}. Relationship +3 (now ${newRelationships[targetCountryId].toFixed(0)}/100 - ${newLevel}), Security +2`,
+        'diplomatic',
+        '🗺️'
+      )
+    ],
+    stateChanges: {
+      treasury: state.treasury - cost,
+      relationships: newRelationships,
+      security: Math.min(100, state.security + 2),
+      happiness: state.happiness + 1 // Citizens happy about peaceful resolution
+    }
   }
 }

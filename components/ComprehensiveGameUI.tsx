@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Country, GameLength } from '@/types/country'
+import React from 'react'
+import { Country } from '@/types/country'
+import { GameLength, GameState } from '@/types/game'
 import { useGameEngine } from '@/hooks/useGameEngine'
 import { useGamePersistence } from '@/hooks/useGamePersistence'
 import ComprehensiveStatsPanel from './ComprehensiveStatsPanel'
@@ -9,18 +11,36 @@ import ChatStyleEventLog from './ChatStyleEventLog'
 import GameWorldMap from './GameWorldMap'
 import ImmersiveActionsPanel from './ImmersiveActionsPanel'
 import CountryFlag from './CountryFlag'
+import UprisingModal from './UprisingModal'
+import WarConfirmationModal from './WarConfirmationModal'
+import WarResultModal from './WarResultModal'
+import DecisionModal from './DecisionModal'
 import { formatCurrency } from '@/utils/formatting'
+import { createCriticalEvent } from '@/utils/eventGenerator'
+import { validateWarDeclaration } from '@/utils/warCalculations'
+import * as gameActions from '@/utils/gameActions'
+import { countries } from '@/data/countries'
 
 interface ComprehensiveGameUIProps {
   country: Country
   onExit: () => void
+  savedGameState?: GameState | null
+  onNewGame?: () => void
 }
 
-export default function ComprehensiveGameUI({ country, onExit }: ComprehensiveGameUIProps) {
+export default function ComprehensiveGameUI({ country, onExit, savedGameState, onNewGame }: ComprehensiveGameUIProps) {
   const [gameLength, setGameLength] = useState<GameLength>(10)
-  const [showLengthSelection, setShowLengthSelection] = useState(true)
+  const [showLengthSelection, setShowLengthSelection] = useState(!savedGameState)
   const [selectedForeignCountry, setSelectedForeignCountry] = useState<string>('')
-  const [activeTab, setActiveTab] = useState<'quick' | 'economic' | 'domestic' | 'foreign'>('quick')
+  const [activeTab, setActiveTab] = useState<'economy' | 'domestic' | 'foreign'>('economy')
+
+  // War modal states
+  const [showWarConfirmation, setShowWarConfirmation] = useState(false)
+  const [warTarget, setWarTarget] = useState<string>('')
+  const [warValidation, setWarValidation] = useState<ReturnType<typeof validateWarDeclaration> | null>(null)
+
+  // Event batching to prevent spam
+  const lastEventRef = React.useRef<{ message: string; time: number } | null>(null)
 
   const {
     gameState,
@@ -29,7 +49,9 @@ export default function ComprehensiveGameUI({ country, onExit }: ComprehensiveGa
     togglePlayPause,
     cycleSpeed,
     executeAction,
-  } = useGameEngine(country, gameLength)
+    triggerGameOver,
+    handleDecisionChoice,
+  } = useGameEngine(country, gameLength, savedGameState)
 
   // Auto-save game state every 2 minutes and save final score
   useGamePersistence(country.id, gameState, gameOver)
@@ -39,30 +61,196 @@ export default function ComprehensiveGameUI({ country, onExit }: ComprehensiveGa
     setActiveTab('foreign')
   }
 
+  const handleUprisingFight = () => {
+    const success = Math.random() < 0.5 // 50% chance
+
+    if (success) {
+      // Player successfully suppresses the uprising
+      executeAction({
+        success: true,
+        message: 'Uprising suppressed!',
+        events: [
+          createCriticalEvent(
+            gameState,
+            '🎖️ UPRISING SUPPRESSED! Your forces have successfully put down the rebellion. Happiness has been restored as a final warning. Do not let this happen again!',
+            'domestic'
+          )
+        ],
+        stateChanges: {
+          uprisingTriggered: false,
+          happiness: gameState.previousHappiness // Restore previous happiness
+        }
+      })
+    } else {
+      // Player fails to suppress - game over
+      executeAction({
+        success: false,
+        message: 'Uprising victorious!',
+        events: [
+          createCriticalEvent(
+            gameState,
+            '💀 UPRISING VICTORIOUS! Your forces have been overwhelmed. The people have overthrown your government. Your reign has ended.',
+            'domestic'
+          )
+        ],
+        stateChanges: {
+          uprisingTriggered: false
+        }
+      })
+      triggerGameOver('YOU HAVE BEEN OVERTHROWN! The people have risen against you.')
+    }
+  }
+
+  const handleUprisingSurrender = () => {
+    executeAction({
+      success: false,
+      message: 'You have surrendered power.',
+      events: [
+        createCriticalEvent(
+          gameState,
+          '🏳️ SURRENDER: You have stepped down from power. The people have won. Your reign has ended.',
+          'domestic'
+        )
+      ],
+      stateChanges: {
+        uprisingTriggered: false
+      }
+    })
+    triggerGameOver('You surrendered to the uprising. Your reign has ended.')
+  }
+
+  // Custom execute action with event debouncing
+  const handleExecuteAction = (result: any) => {
+    const now = Date.now()
+    const batchWindow = 2000 // 2 seconds
+
+    // Check if this is a repeat event
+    if (result.events && result.events.length > 0) {
+      const firstEvent = result.events[0]
+      const eventMessage = firstEvent.message?.substring(0, 50) // First 50 chars
+
+      if (lastEventRef.current &&
+          lastEventRef.current.message === eventMessage &&
+          (now - lastEventRef.current.time) < batchWindow) {
+        // Same event within 2 seconds - skip logging but apply state changes
+        executeAction({ ...result, events: [] })
+        return
+      }
+
+      lastEventRef.current = { message: eventMessage, time: now }
+    }
+
+    executeAction(result)
+  }
+
+  const handleWarDeclaration = (targetCountryId: string) => {
+    const validation = validateWarDeclaration(gameState, targetCountryId)
+
+    if (!validation.canDeclareWar) {
+      // Show rejection reasons in event log
+      executeAction({
+        success: false,
+        message: 'Cannot declare war',
+        events: validation.reasons.map(reason => createCriticalEvent(gameState, `⚔️ WAR BLOCKED: ${reason}`, 'military')),
+        stateChanges: {}
+      })
+      return
+    }
+
+    // Show confirmation modal with stats
+    setWarTarget(targetCountryId)
+    setWarValidation(validation)
+    setShowWarConfirmation(true)
+  }
+
+  const handleWarConfirm = () => {
+    if (!warTarget) return
+
+    setShowWarConfirmation(false)
+    const result = gameActions.declareWar(gameState, warTarget)
+    executeAction(result)
+    setWarTarget('')
+    setWarValidation(null)
+  }
+
+  const handleWarCancel = () => {
+    setShowWarConfirmation(false)
+    setWarTarget('')
+    setWarValidation(null)
+  }
+
+  const handleWarResultClose = () => {
+    executeAction({
+      success: true,
+      message: 'War concluded',
+      events: [],
+      stateChanges: {
+        pendingWarResult: null
+      }
+    })
+  }
+
   if (showLengthSelection) {
     return (
       <div className="h-screen flex items-center justify-center bg-gradient-to-br from-game-darker via-game-dark to-game-darker">
         <div className="game-panel p-8 max-w-md">
-          <h2 className="text-2xl font-bold mb-4 text-center">Select Game Length</h2>
-          <p className="text-gray-400 text-sm mb-6 text-center">
-            Choose how long you want to lead {country.name}
-          </p>
+          {savedGameState ? (
+            <>
+              <h2 className="text-2xl font-bold mb-4 text-center">Resume Game?</h2>
+              <p className="text-gray-400 text-sm mb-6 text-center">
+                You have a saved game for {country.name}
+              </p>
+              
+              <div className="space-y-3">
+                <button
+                  onClick={() => {
+                    setGameLength(savedGameState.gameLength)
+                    setShowLengthSelection(false)
+                  }}
+                  className="w-full p-4 rounded-lg border-2 border-green-500 hover:border-green-400 bg-green-500/10 hover:bg-green-500/20 transition-all"
+                >
+                  <div className="text-2xl font-bold mb-1">🔄 RESUME GAME</div>
+                  <div className="text-xs text-gray-400">
+                    Day {savedGameState.currentDay} of {savedGameState.totalDays} • Score: {savedGameState.score.toFixed(0)}
+                  </div>
+                </button>
+                
+                <button
+                  onClick={() => {
+                    if (onNewGame) onNewGame()
+                    setShowLengthSelection(true)
+                  }}
+                  className="w-full p-4 rounded-lg border-2 border-game-border hover:border-game-accent bg-game-darker hover:bg-game-dark transition-all"
+                >
+                  <div className="text-2xl font-bold mb-1">🆕 NEW GAME</div>
+                  <div className="text-xs text-gray-400">Start fresh with this country</div>
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h2 className="text-2xl font-bold mb-4 text-center">Select Game Length</h2>
+              <p className="text-gray-400 text-sm mb-6 text-center">
+                Choose how long you want to lead {country.name}
+              </p>
 
-          <div className="space-y-3">
-            {[5, 10, 25].map((years) => (
-              <button
-                key={years}
-                onClick={() => {
-                  setGameLength(years as GameLength)
-                  setShowLengthSelection(false)
-                }}
-                className="w-full p-4 rounded-lg border-2 border-game-border hover:border-game-accent bg-game-darker hover:bg-game-dark transition-all"
-              >
-                <div className="text-2xl font-bold mb-1">{years} Years</div>
-                <div className="text-xs text-gray-400">{years * 365} days</div>
-              </button>
-            ))}
-          </div>
+              <div className="space-y-3">
+                {[5, 10, 25].map((years) => (
+                  <button
+                    key={years}
+                    onClick={() => {
+                      setGameLength(years as GameLength)
+                      setShowLengthSelection(false)
+                    }}
+                    className="w-full p-4 rounded-lg border-2 border-game-border hover:border-game-accent bg-game-darker hover:bg-game-dark transition-all"
+                  >
+                    <div className="text-2xl font-bold mb-1">{years} Years</div>
+                    <div className="text-xs text-gray-400">{years * 365} days</div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           <button
             onClick={onExit}
@@ -80,7 +268,7 @@ export default function ComprehensiveGameUI({ country, onExit }: ComprehensiveGa
       <div className="h-screen flex items-center justify-center bg-gradient-to-br from-game-darker via-game-dark to-game-darker">
         <div className="game-panel p-8 max-w-2xl text-center">
           <h1 className="text-4xl font-bold mb-4">
-            {gameState.uprisingProgress >= 30 ? '💀 GAME OVER' : '🎉 GAME COMPLETE'}
+            {gameState.currentDay >= gameState.totalDays ? '🎉 GAME COMPLETE' : '💀 GAME OVER'}
           </h1>
           <p className="text-xl text-gray-300 mb-6">{gameOverReason}</p>
 
@@ -136,12 +324,25 @@ export default function ComprehensiveGameUI({ country, onExit }: ComprehensiveGa
               <div className="text-sm text-gray-400">Day {gameState.currentDay} of {gameState.totalDays}</div>
               <div className="text-lg font-semibold">{yearsRemaining} years remaining</div>
             </div>
-            <button
-              onClick={onExit}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded transition-colors"
-            >
-              Exit Game
-            </button>
+            <div className="flex gap-2">
+              {savedGameState && onNewGame && (
+                <button
+                  onClick={() => {
+                    if (onNewGame) onNewGame()
+                    setShowLengthSelection(true)
+                  }}
+                  className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded transition-colors text-sm"
+                >
+                  New Game
+                </button>
+              )}
+              <button
+                onClick={onExit}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded transition-colors"
+              >
+                Exit Game
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -168,10 +369,11 @@ export default function ComprehensiveGameUI({ country, onExit }: ComprehensiveGa
           {/* Immersive Actions Panel (overlays on map) */}
           <ImmersiveActionsPanel
             gameState={gameState}
-            onAction={executeAction}
+            onAction={handleExecuteAction}
             selectedForeignCountry={selectedForeignCountry}
             activeTab={activeTab}
             onTabChange={setActiveTab}
+            onWarDeclaration={handleWarDeclaration}
           />
         </div>
 
@@ -216,6 +418,47 @@ export default function ComprehensiveGameUI({ country, onExit }: ComprehensiveGa
         </div>
       </div>
 
+      {/* Uprising Modal */}
+      <UprisingModal
+        isOpen={gameState.uprisingTriggered}
+        onFight={handleUprisingFight}
+        onSurrender={handleUprisingSurrender}
+      />
+
+      {/* War Confirmation Modal */}
+      {warValidation && (
+        <WarConfirmationModal
+          isOpen={showWarConfirmation}
+          enemyName={warValidation.reasons.length === 0 ? countries.find(c => c.id === warTarget)?.name || 'Unknown' : 'Error'}
+          winProbability={warValidation.winProbability}
+          playerPower={warValidation.playerPower}
+          enemyPower={warValidation.enemyPower}
+          warCost={warValidation.warCost}
+          happinessCost={warValidation.happinessCost}
+          onConfirm={handleWarConfirm}
+          onCancel={handleWarCancel}
+        />
+      )}
+
+      {/* War Result Modal */}
+      {gameState.pendingWarResult && (
+        <WarResultModal
+          isOpen={!!gameState.pendingWarResult}
+          playerWon={gameState.pendingWarResult.playerWon}
+          enemyName={gameState.pendingWarResult.enemyName}
+          onClose={handleWarResultClose}
+        />
+      )}
+
+      {/* Decision Modal - Queue system (FIFO) */}
+      {gameState.pendingDecisions.length > 0 && (
+        <DecisionModal
+          isOpen={true}
+          decision={gameState.pendingDecisions[0]}
+          gameState={gameState}
+          onChoice={handleDecisionChoice}
+        />
+      )}
     </div>
   )
 }

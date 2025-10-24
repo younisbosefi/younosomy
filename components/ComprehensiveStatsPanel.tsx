@@ -101,24 +101,24 @@ export default function ComprehensiveStatsPanel({ gameState, onOpenActions }: Co
       </div>
 
       {/* Uprising Warning - Dramatic */}
-      {gameState.uprisingProgress > 0 && (
+      {gameState.happiness < 20 && (
         <div className="retro-panel bg-red-500/20 border-2 border-red-500 p-3 animate-pulse relative overflow-hidden">
           <div className="scanline"></div>
           <div className="text-center">
             <div className="text-red-400 font-bold font-mono text-sm mb-1 glitch-text animate-bounce-slow">
-              🔥 REVOLUTION IMMINENT 🔥
+              🔥 UPRISING RISK 🔥
             </div>
             <div className="text-xs font-mono text-red-300 animate-flash">
-              {30 - gameState.uprisingProgress} DAYS REMAINING!
+              DAILY PROBABILITY: {(((20 - gameState.happiness) / 20) * 10).toFixed(1)}%
             </div>
             <div className="w-full bg-game-darker rounded h-3 mt-2 overflow-hidden border border-red-500">
               <div
                 className="h-full bg-red-500 transition-all animate-pulse"
-                style={{ width: `${(gameState.uprisingProgress / 30) * 100}%` }}
+                style={{ width: `${((20 - gameState.happiness) / 20) * 100}%` }}
               />
             </div>
             <div className="text-xs font-mono text-red-400 mt-1">
-              DANGER LEVEL: {((gameState.uprisingProgress / 30) * 100).toFixed(0)}%
+              DANGER LEVEL: {((20 - gameState.happiness) / 20 * 100).toFixed(0)}%
             </div>
           </div>
         </div>

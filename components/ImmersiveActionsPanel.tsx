@@ -2,29 +2,33 @@
 
 import { useState } from 'react'
 import React from 'react'
+import { Icon } from '@iconify/react'
 import { GameState } from '@/types/game'
 import { countries } from '@/data/countries'
 import * as gameActions from '@/utils/gameActions'
 import { formatCurrency } from '@/utils/formatting'
+import { ICONS } from '@/utils/iconConfig'
 
 interface ImmersiveActionsPanelProps {
   gameState: GameState
   onAction: (result: any) => void
   selectedForeignCountry?: string
-  activeTab?: 'quick' | 'economic' | 'domestic' | 'foreign'
-  onTabChange?: (tab: 'quick' | 'economic' | 'domestic' | 'foreign') => void
+  activeTab?: 'economy' | 'domestic' | 'foreign'
+  onTabChange?: (tab: 'economy' | 'domestic' | 'foreign') => void
+  onWarDeclaration?: (targetCountryId: string) => void
 }
 
-type Tab = 'quick' | 'economic' | 'domestic' | 'foreign'
+type Tab = 'economy' | 'domestic' | 'foreign'
 
 export default function ImmersiveActionsPanel({
   gameState,
   onAction,
   selectedForeignCountry = '',
   activeTab: externalActiveTab,
-  onTabChange
+  onTabChange,
+  onWarDeclaration
 }: ImmersiveActionsPanelProps) {
-  const [internalActiveTab, setInternalActiveTab] = useState<Tab>('quick')
+  const [internalActiveTab, setInternalActiveTab] = useState<Tab>('economy')
   const [expanded, setExpanded] = useState(false)
 
   const activeTab = externalActiveTab || internalActiveTab
@@ -44,7 +48,7 @@ export default function ImmersiveActionsPanel({
   }, [selectedForeignCountry, externalActiveTab])
 
   return (
-    <div className="absolute bottom-20 left-0 right-0 z-40">
+    <div className="absolute bottom-4 left-0 right-0 z-40 px-2">
       {/* Toggle Button */}
       <div className="text-center mb-2">
         <button
@@ -66,10 +70,9 @@ export default function ImmersiveActionsPanel({
         <div className="scanline"></div>
 
         {/* Tabs */}
-        <div className="grid grid-cols-4 border-b-2 border-game-border">
+        <div className="grid grid-cols-3 border-b-2 border-game-border">
           {[
-            { id: 'quick' as Tab, label: '⚡ QUICK', color: 'blue' },
-            { id: 'economic' as Tab, label: '💰 ECONOMY', color: 'green' },
+            { id: 'economy' as Tab, label: '💰 ECONOMY', color: 'green' },
             { id: 'domestic' as Tab, label: '🏗️ DOMESTIC', color: 'purple' },
             { id: 'foreign' as Tab, label: '🌍 FOREIGN', color: 'red' },
           ].map((tab) => (
@@ -89,14 +92,14 @@ export default function ImmersiveActionsPanel({
 
         {/* Content */}
         <div className="p-4 overflow-y-auto" style={{ maxHeight: '300px' }}>
-          {activeTab === 'quick' && <QuickActions gameState={gameState} onAction={onAction} />}
-          {activeTab === 'economic' && <EconomicActions gameState={gameState} onAction={onAction} />}
+          {activeTab === 'economy' && <EconomyActions gameState={gameState} onAction={onAction} />}
           {activeTab === 'domestic' && <DomesticActions gameState={gameState} onAction={onAction} />}
           {activeTab === 'foreign' && (
             <ForeignActions
               gameState={gameState}
               onAction={onAction}
               initialCountry={selectedForeignCountry}
+              onWarDeclaration={onWarDeclaration}
             />
           )}
         </div>
@@ -105,7 +108,7 @@ export default function ImmersiveActionsPanel({
   )
 }
 
-function QuickActions({ gameState, onAction }: { gameState: GameState; onAction: any }) {
+function EconomyActions({ gameState, onAction }: { gameState: GameState; onAction: any }) {
   // PERCENTAGE-BASED AMOUNTS (scales with economy size!)
   const printAmount = gameState.gdp * 0.01 // 1% of GDP
   const sectorAmount = gameState.treasury * 0.05 // 5% of treasury
@@ -114,210 +117,122 @@ function QuickActions({ gameState, onAction }: { gameState: GameState; onAction:
   const debtPayment = gameState.treasury * 0.2 // 20% of treasury for debt payment
 
   return (
-    <div className="grid grid-cols-3 gap-2">
-      <ActionCard
-        icon="📈"
-        label="RAISE RATES"
-        sublabel="+0.5%"
-        onClick={() => {
-          const result = gameActions.adjustInterestRate(gameState, Math.min(10, gameState.interestRate + 0.5))
-          onAction(result)
-        }}
-        color="blue"
-      />
-      <ActionCard
-        icon="📉"
-        label="LOWER RATES"
-        sublabel="-0.5%"
-        onClick={() => {
-          const result = gameActions.adjustInterestRate(gameState, Math.max(0, gameState.interestRate - 0.5))
-          onAction(result)
-        }}
-        color="blue"
-      />
-      <ActionCard
-        icon="💵"
-        label="PRINT MONEY"
-        sublabel="1% GDP ⚠️"
-        onClick={() => {
-          const result = gameActions.printMoney(gameState, printAmount)
-          onAction(result)
-        }}
-        color="yellow"
-        disabled={gameState.inflationRate > 10 || gameState.cooldowns.printMoney > 0}
-        cooldownDays={gameState.cooldowns.printMoney}
-        maxCooldown={30}
-      />
-      <ActionCard
-        icon="🏥"
-        label="INVEST HEALTH"
-        sublabel="5% Treasury"
-        onClick={() => {
-          const result = gameActions.spendOnSector(gameState, 'health', sectorAmount)
-          onAction(result)
-        }}
-        color="green"
-        disabled={gameState.treasury < sectorAmount}
-      />
-      <ActionCard
-        icon="🎓"
-        label="INVEST EDU"
-        sublabel="5% Treasury"
-        onClick={() => {
-          const result = gameActions.spendOnSector(gameState, 'education', sectorAmount)
-          onAction(result)
-        }}
-        color="green"
-        disabled={gameState.treasury < sectorAmount}
-      />
-      <ActionCard
-        icon="🏗️"
-        label="INFRASTRUCTURE"
-        sublabel="5% Treasury"
-        onClick={() => {
-          const result = gameActions.spendOnSector(gameState, 'infrastructure', sectorAmount)
-          onAction(result)
-        }}
-        color="green"
-        disabled={gameState.treasury < sectorAmount}
-      />
-      <ActionCard
-        icon="🛡️"
-        label="TO RESERVES"
-        sublabel="10% Treasury"
-        onClick={() => {
-          const result = gameActions.addToReserves(gameState, reserveAmount)
-          onAction(result)
-        }}
-        color="purple"
-        disabled={gameState.treasury < reserveAmount}
-      />
-      <ActionCard
-        icon="🏦"
-        label="BORROW IMF"
-        sublabel="10% GDP"
-        onClick={() => {
-          const result = gameActions.borrowFromIMF(gameState, borrowAmount)
-          onAction(result)
-        }}
-        color="red"
-        disabled={gameState.cooldowns.borrowIMF > 0}
-        cooldownDays={gameState.cooldowns.borrowIMF}
-        maxCooldown={90}
-      />
-      {gameState.debt > 0 && (
-        <ActionCard
-          icon="💳"
-          label="PAY DEBT"
-          sublabel="20% Treasury"
-          onClick={() => {
-            const result = gameActions.payOffDebt(gameState, debtPayment)
-            onAction(result)
-          }}
-          color="green"
-          disabled={gameState.treasury < debtPayment}
-        />
-      )}
-      {gameState.isUprising && (
-        <ActionCard
-          icon="🪖"
-          label="REPRESS"
-          sublabel="Stop Uprising"
-          onClick={() => {
-            const result = gameActions.repressUprising(gameState)
-            onAction(result)
-          }}
-          color="red"
-          className="col-span-3 animate-pulse"
-        />
-      )}
-    </div>
-  )
-}
-
-function EconomicActions({ gameState, onAction }: { gameState: GameState; onAction: any }) {
-  const [interestRate, setInterestRate] = useState(gameState.interestRate)
-  const [amount, setAmount] = useState(50)
-
-  return (
-    <div className="space-y-3">
-      <div className="retro-panel p-3 bg-game-darker">
-        <div className="font-mono text-xs text-green-400 mb-2">INTEREST RATE: {interestRate.toFixed(1)}%</div>
-        <input
-          type="range"
-          min="0"
-          max="10"
-          step="0.1"
-          value={interestRate}
-          onChange={(e) => setInterestRate(Number(e.target.value))}
-          className="w-full mb-2"
-        />
-        <button
-          onClick={() => {
-            const result = gameActions.adjustInterestRate(gameState, interestRate)
-            onAction(result)
-          }}
-          className="w-full py-2 bg-game-accent rounded font-mono text-sm font-bold action-button"
-        >
-          APPLY RATE
-        </button>
+    <div className="space-y-4">
+      {/* Quick Actions Grid */}
+      <div>
+        <div className="text-xs font-mono text-gray-400 mb-2 uppercase">Quick Actions</div>
+        <div className="grid grid-cols-3 gap-2">
+          <ActionCard
+            icon={ICONS.rateIncrease}
+            label="RAISE RATES"
+            sublabel="+0.5%"
+            onClick={() => {
+              const result = gameActions.adjustInterestRate(gameState, Math.min(10, gameState.interestRate + 0.5))
+              onAction(result)
+            }}
+            color="blue"
+          />
+          <ActionCard
+            icon={ICONS.rateDecrease}
+            label="LOWER RATES"
+            sublabel="-0.5%"
+            onClick={() => {
+              const result = gameActions.adjustInterestRate(gameState, Math.max(0, gameState.interestRate - 0.5))
+              onAction(result)
+            }}
+            color="blue"
+          />
+          <ActionCard
+            icon={ICONS.printMoney}
+            label="PRINT MONEY"
+            sublabel="1% GDP ⚠️"
+            onClick={() => {
+              const result = gameActions.printMoney(gameState, printAmount)
+              onAction(result)
+            }}
+            color="yellow"
+            disabled={gameState.inflationRate > 10 || gameState.cooldowns.printMoney > 0}
+            cooldownDays={gameState.cooldowns.printMoney}
+            maxCooldown={30}
+          />
+          <ActionCard
+            icon={ICONS.reserves}
+            label="TO RESERVES"
+            sublabel="10% Treasury"
+            onClick={() => {
+              const result = gameActions.addToReserves(gameState, reserveAmount)
+              onAction(result)
+            }}
+            color="purple"
+            disabled={gameState.treasury < reserveAmount}
+          />
+          <ActionCard
+            icon={ICONS.borrowMoney}
+            label="BORROW IMF"
+            sublabel="10% GDP"
+            onClick={() => {
+              const result = gameActions.borrowFromIMF(gameState, borrowAmount)
+              onAction(result)
+            }}
+            color="red"
+            disabled={gameState.cooldowns.borrowIMF > 0}
+            cooldownDays={gameState.cooldowns.borrowIMF}
+            maxCooldown={90}
+          />
+          {gameState.debt > 0 && (
+            <ActionCard
+              icon={ICONS.payDebt}
+              label="PAY DEBT"
+              sublabel="20% Treasury"
+              onClick={() => {
+                const result = gameActions.payOffDebt(gameState, debtPayment)
+                onAction(result)
+              }}
+              color="green"
+              disabled={gameState.treasury < debtPayment}
+            />
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <ActionCard
-          icon="💵"
-          label="PRINT MONEY"
-          sublabel={`$${amount}B`}
-          onClick={() => {
-            const result = gameActions.printMoney(gameState, amount)
-            onAction(result)
-          }}
-          color="yellow"
-          disabled={gameState.cooldowns.printMoney > 0}
-          cooldownDays={gameState.cooldowns.printMoney}
-          maxCooldown={30}
-        />
-        <ActionCard
-          icon="🏦"
-          label="BORROW IMF"
-          sublabel={`$${amount}B`}
-          onClick={() => {
-            const result = gameActions.borrowFromIMF(gameState, amount)
-            onAction(result)
-          }}
-          color="red"
-          disabled={gameState.cooldowns.borrowIMF > 0}
-          cooldownDays={gameState.cooldowns.borrowIMF}
-          maxCooldown={90}
-        />
-      </div>
-
-      <div className="flex gap-2 items-center">
-        <input
-          type="number"
-          value={amount}
-          onChange={(e) => setAmount(Number(e.target.value))}
-          className="flex-1 px-3 py-2 bg-game-darker border border-game-border rounded font-mono"
-          placeholder="Amount"
-        />
-        <button
-          onClick={() => setAmount(10)}
-          className="px-3 py-2 bg-game-border rounded font-mono text-xs"
-        >
-          $10B
-        </button>
-        <button
-          onClick={() => setAmount(50)}
-          className="px-3 py-2 bg-game-border rounded font-mono text-xs"
-        >
-          $50B
-        </button>
-        <button
-          onClick={() => setAmount(100)}
-          className="px-3 py-2 bg-game-border rounded font-mono text-xs"
-        >
-          $100B
-        </button>
+      {/* Key Sectors */}
+      <div>
+        <div className="text-xs font-mono text-gray-400 mb-2 uppercase">Key Sectors (5% Treasury Each)</div>
+        <div className="grid grid-cols-3 gap-2">
+          <ActionCard
+            icon={ICONS.health}
+            label="HEALTH"
+            sublabel="5% Treasury"
+            onClick={() => {
+              const result = gameActions.spendOnSector(gameState, 'health', sectorAmount)
+              onAction(result)
+            }}
+            color="green"
+            disabled={gameState.treasury < sectorAmount}
+          />
+          <ActionCard
+            icon={ICONS.education}
+            label="EDUCATION"
+            sublabel="5% Treasury"
+            onClick={() => {
+              const result = gameActions.spendOnSector(gameState, 'education', sectorAmount)
+              onAction(result)
+            }}
+            color="green"
+            disabled={gameState.treasury < sectorAmount}
+          />
+          <ActionCard
+            icon={ICONS.infrastructure}
+            label="INFRASTRUCTURE"
+            sublabel="5% Treasury"
+            onClick={() => {
+              const result = gameActions.spendOnSector(gameState, 'infrastructure', sectorAmount)
+              onAction(result)
+            }}
+            color="green"
+            disabled={gameState.treasury < sectorAmount}
+          />
+        </div>
       </div>
     </div>
   )
@@ -328,16 +243,16 @@ function DomesticActions({ gameState, onAction }: { gameState: GameState; onActi
   const investAmount = gameState.treasury * 0.05
 
   const sectors = [
-    { key: 'health' as const, name: 'HEALTH', icon: '🏥' },
-    { key: 'education' as const, name: 'EDUCATION', icon: '🎓' },
-    { key: 'infrastructure' as const, name: 'INFRASTRUCTURE', icon: '🏗️' },
-    { key: 'housing' as const, name: 'HOUSING', icon: '🏘️' },
-    { key: 'military' as const, name: 'MILITARY', icon: '🪖' },
-    { key: 'security' as const, name: 'SECURITY', icon: '👮' },
-    { key: 'agriculture' as const, name: 'AGRICULTURE', icon: '🌾' },
-    { key: 'transportation' as const, name: 'TRANSPORT', icon: '🚇' },
-    { key: 'tourism' as const, name: 'TOURISM', icon: '🏖️' },
-    { key: 'sports' as const, name: 'SPORTS', icon: '⚽' },
+    { key: 'health' as const, name: 'HEALTH', icon: ICONS.health },
+    { key: 'education' as const, name: 'EDUCATION', icon: ICONS.education },
+    { key: 'infrastructure' as const, name: 'INFRASTRUCTURE', icon: ICONS.infrastructure },
+    { key: 'housing' as const, name: 'HOUSING', icon: ICONS.housing },
+    { key: 'military' as const, name: 'MILITARY', icon: ICONS.military },
+    { key: 'security' as const, name: 'SECURITY', icon: ICONS.security },
+    { key: 'agriculture' as const, name: 'AGRICULTURE', icon: ICONS.agriculture },
+    { key: 'transportation' as const, name: 'TRANSPORT', icon: ICONS.transportation },
+    { key: 'tourism' as const, name: 'TOURISM', icon: ICONS.tourism },
+    { key: 'sports' as const, name: 'SPORTS', icon: ICONS.sports },
   ]
 
   return (
@@ -363,18 +278,21 @@ function DomesticActions({ gameState, onAction }: { gameState: GameState; onActi
 function ForeignActions({
   gameState,
   onAction,
-  initialCountry = ''
+  initialCountry = '',
+  onWarDeclaration
 }: {
   gameState: GameState
   onAction: any
   initialCountry?: string
+  onWarDeclaration?: (targetCountryId: string) => void
 }) {
   const [selectedCountry, setSelectedCountry] = useState(initialCountry)
   const otherCountries = countries.filter((c) => c.id !== gameState.country.id)
 
   // PERCENTAGE-BASED foreign policy costs
   const aidAmount = gameState.treasury * 0.05 // 5% of treasury
-  const warCost = gameState.gdp * 0.15 // 15% of GDP (wars are expensive!)
+  const isEnemy = selectedCountry && gameState.enemies.includes(selectedCountry)
+  const warCostPercent = isEnemy ? 0.02 : 0.08 // 2% for enemies, 8% for neutrals
 
   // Update selected country when initialCountry changes
   React.useEffect(() => {
@@ -401,20 +319,24 @@ function ForeignActions({
       {selectedCountry && (
         <div className="grid grid-cols-2 gap-2">
           <ActionCard
-            icon="⚔️"
+            icon={ICONS.war}
             label="DECLARE WAR"
-            sublabel="15% GDP"
+            sublabel={`${(warCostPercent * 100).toFixed(0)}% GDP`}
             onClick={() => {
-              const result = gameActions.declareWar(gameState, selectedCountry)
-              onAction(result)
+              if (onWarDeclaration) {
+                onWarDeclaration(selectedCountry)
+              } else {
+                const result = gameActions.declareWar(gameState, selectedCountry)
+                onAction(result)
+              }
             }}
             color="red"
-            disabled={gameState.treasury < warCost || gameState.cooldowns.declareWar > 0}
+            disabled={gameState.cooldowns.declareWar > 0}
             cooldownDays={gameState.cooldowns.declareWar}
             maxCooldown={180}
           />
           <ActionCard
-            icon="🚫"
+            icon={ICONS.sanction}
             label="SANCTION"
             sublabel="Embargo"
             onClick={() => {
@@ -424,7 +346,7 @@ function ForeignActions({
             color="yellow"
           />
           <ActionCard
-            icon="🤝"
+            icon={ICONS.alliance}
             label="ALLIANCE"
             sublabel="Propose"
             onClick={() => {
@@ -434,7 +356,7 @@ function ForeignActions({
             color="green"
           />
           <ActionCard
-            icon="🎁"
+            icon={ICONS.sendAid}
             label="SEND AID"
             sublabel="5% Treasury"
             onClick={() => {
@@ -443,6 +365,19 @@ function ForeignActions({
             }}
             color="blue"
             disabled={gameState.treasury < aidAmount}
+          />
+          <ActionCard
+            icon={ICONS.requestAid}
+            label="REQUEST AID"
+            sublabel="100d cooldown"
+            onClick={() => {
+              const result = gameActions.requestAid(gameState, selectedCountry)
+              onAction(result)
+            }}
+            color="purple"
+            disabled={gameState.cooldowns.requestAid > 0}
+            cooldownDays={gameState.cooldowns.requestAid}
+            maxCooldown={100}
           />
         </div>
       )}
@@ -486,7 +421,7 @@ function ActionCard({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`retro-panel p-3 border-2 ${colorClasses[color]} transition-all duration-200 transform hover:scale-105 action-button disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden ${className}`}
+      className={`retro-panel p-3 border-2 ${colorClasses[color]} transition-all duration-200 action-button disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden ${className}`}
     >
       {/* Cooldown progress bar */}
       {isCooldown && (
@@ -500,7 +435,9 @@ function ActionCard({
           </div>
         </>
       )}
-      <div className="text-2xl mb-1">{icon}</div>
+      <div className="mb-1 flex justify-center">
+        <Icon icon={icon} className="text-3xl" />
+      </div>
       <div className="font-mono text-xs font-bold">{label}</div>
       <div className="font-mono text-xs text-gray-400">
         {isCooldown ? `Cooldown: ${Math.ceil(cooldownDays)}d` : sublabel}

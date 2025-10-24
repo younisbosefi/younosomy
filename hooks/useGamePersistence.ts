@@ -7,7 +7,7 @@ export function useGamePersistence(
   gameState: GameState,
   gameOver: boolean
 ) {
-  const saveIntervalRef = useRef<NodeJS.Timeout>()
+  const saveIntervalRef = useRef<NodeJS.Timeout | undefined>(undefined)
   const lastSavedRef = useRef<string>('')
 
   // Auto-save every 2 minutes

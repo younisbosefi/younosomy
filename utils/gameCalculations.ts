@@ -1,12 +1,22 @@
 import { GameState, SectorPotential } from '@/types/game'
 import { sectorPotentials } from '@/data/sectorPotentials'
+import { calculateTourismBoost, calculateTradeBoost, calculateRelationshipHappiness } from './relationshipSystem'
 
 // Calculate GDP Growth Rate based on multiple factors (ECONOMIC MISTAKES HAVE LASTING CONSEQUENCES!)
 export function calculateGDPGrowthRate(state: GameState): number {
   let growth = 2.0 // Base growth rate
 
-  // Interest rate effect (high rate hurts growth)
-  growth -= (state.interestRate - 2) * 0.15
+  // Interest rate effect (SEVERELY PUNISHING!)
+  // High rates = businesses can't borrow to expand, consumers can't afford loans
+  if (state.interestRate > 7) {
+    // Very high rates devastate growth
+    growth -= (state.interestRate - 7) * 0.8 // 10% rate = -2.4% growth!
+  } else if (state.interestRate > 4) {
+    growth -= (state.interestRate - 4) * 0.5 // Moderate penalty
+  } else if (state.interestRate < 1) {
+    // TOO LOW rates can cause asset bubbles and malinvestment
+    growth -= (1 - state.interestRate) * 0.3
+  }
 
   // LASTING CONSEQUENCE: Debt-to-GDP ratio effect (MUCH MORE PUNISHING!)
   if (state.debtToGdpRatio > 100) {
@@ -33,9 +43,11 @@ export function calculateGDPGrowthRate(state: GameState): number {
   // Happiness effect (happy citizens = productive economy)
   growth += (state.happiness - 50) * 0.03
 
-  // War effect (active wars hurt economy)
+  // War effect (active wars DEVASTATE economy - especially multiple wars!)
   if (state.isInWar) {
-    growth -= state.activeWars.length * 1.5
+    const numWars = state.activeWars.length
+    // Exponential penalty for multiple wars: 1 war = -2%, 2 wars = -5%, 3 wars = -9%
+    growth -= numWars * 2.0 + (numWars * (numWars - 1)) * 0.5
   }
 
   // Sanction effect
@@ -49,6 +61,10 @@ export function calculateGDPGrowthRate(state: GameState): number {
   // Sector investments positive effect
   const sectorBoost = calculateSectorBoost(state)
   growth += sectorBoost
+
+  // Relationship system: Trade benefits/penalties from international relations
+  const tradeBoost = calculateTradeBoost(state)
+  growth += tradeBoost
 
   return Number(growth.toFixed(2))
 }
@@ -97,6 +113,10 @@ export function calculateDailyRevenue(state: GameState): number {
   // Sanctions hurt revenue
   revenue -= state.sanctionsOnUs.length * 0.01
 
+  // Relationship system: Tourism revenue from friendly nations
+  const tourismBoost = calculateTourismBoost(state)
+  revenue += tourismBoost
+
   return Number(revenue.toFixed(4))
 }
 
@@ -105,7 +125,7 @@ export function calculateInflationRate(state: GameState, moneyPrinted: number = 
   let inflation = state.inflationRate
 
   // Interest rate effect (high rate lowers inflation, but less effective at high levels)
-  const interestEffectiveness = inflation > 10 ? 0.2 : 0.3 // Harder to fight hyperinflation
+  const interestEffectiveness = inflation > 10 ? 0.3 : 0.5 // Increased effectiveness
   inflation -= (state.interestRate - 2) * interestEffectiveness
 
   // Money printing effect
@@ -147,8 +167,24 @@ export function calculateUnemploymentRate(state: GameState): number {
   // GDP growth effect (growth = jobs)
   unemployment -= state.gdpGrowthRate * 0.2
 
+  // HIGH INTEREST RATES KILL JOBS! (businesses can't borrow to expand)
+  if (state.interestRate > 6) {
+    unemployment += (state.interestRate - 6) * 0.4 // 10% rate = +1.6% unemployment!
+  }
+
+  // TOO LOW interest rates can also cause problems (misallocated capital)
+  if (state.interestRate < 0.5 && state.inflationRate > 5) {
+    unemployment += 0.3 // Asset bubble forming
+  }
+
   // Sector investment effect (infrastructure, education create jobs)
   unemployment -= (state.sectorLevels.infrastructure + state.sectorLevels.education) * 0.01
+
+  // Declining infrastructure causes structural unemployment (ONLY IF BELOW START)
+  const infrastructureDecline = state.initialStats.sectorLevels.infrastructure - state.sectorLevels.infrastructure
+  if (infrastructureDecline > 0) {
+    unemployment += infrastructureDecline * 0.08 // Punishment for letting infrastructure decay
+  }
 
   // War effect (wars create jobs but also casualties)
   if (state.isInWar) {
@@ -159,8 +195,8 @@ export function calculateUnemploymentRate(state: GameState): number {
   const baseline = state.country.difficulty === 'easy' ? 4 : state.country.difficulty === 'medium' ? 6 : 10
   unemployment += (baseline - unemployment) * 0.02
 
-  // Keep between 1 and 30
-  unemployment = Math.max(1, Math.min(30, unemployment))
+  // Keep between 1 and 40 (allow higher unemployment)
+  unemployment = Math.max(1, Math.min(40, unemployment))
 
   return Number(unemployment.toFixed(2))
 }
@@ -208,23 +244,72 @@ export function calculateHappiness(state: GameState): number {
     happiness -= (state.unemploymentRate - 20) * 1.5
   }
 
-  // War effect - always reduces happiness
-  state.activeWars.forEach((war) => {
-    if (war.isPlayerInvolved) {
-      happiness -= 8 // Wars make people very unhappy
-    }
-  })
+  // INTEREST RATE EXTREMES HURT HAPPINESS
+  if (state.interestRate > 7) {
+    // High rates = expensive mortgages, car loans, credit cards
+    happiness -= (state.interestRate - 7) * 3 // 10% rate = -9 happiness!
+  } else if (state.interestRate < 1 && state.inflationRate > 5) {
+    // Too low with high inflation = savings destroyed
+    happiness -= 5
+  }
+
+  // War effect - always reduces happiness (MULTIPLE WARS EXPONENTIALLY WORSE!)
+  const playerWars = state.activeWars.filter(war => war.isPlayerInvolved)
+  if (playerWars.length > 0) {
+    // First war: -10, Second war: -12, Third war: -14...
+    playerWars.forEach((war, index) => {
+      happiness -= 10 + (index * 2) // Exponentially more unpopular
+    })
+  }
 
   // Sanctions effect - always bad
   happiness -= state.sanctionsOnUs.length * 3
 
-  // Sector investment effect (health, education, housing boost happiness)
-  happiness += (state.sectorLevels.health + state.sectorLevels.education + state.sectorLevels.housing) * 0.03
+  // NEGLECTED SECTORS CAUSE MISERY! (ONLY IF BELOW STARTING LEVELS)
+  // Health decline = disease, suffering
+  const healthDecline = state.initialStats.sectorLevels.health - state.sectorLevels.health
+  if (healthDecline > 0) {
+    happiness -= healthDecline * 0.5 // Punishment for letting health decline
+  } else if (state.sectorLevels.health > state.initialStats.sectorLevels.health + 30) {
+    happiness += (state.sectorLevels.health - state.initialStats.sectorLevels.health - 30) * 0.1 // Small reward for major improvements
+  }
+
+  // Education decline = no opportunities
+  const educationDecline = state.initialStats.sectorLevels.education - state.sectorLevels.education
+  if (educationDecline > 0) {
+    happiness -= educationDecline * 0.4
+  } else if (state.sectorLevels.education > state.initialStats.sectorLevels.education + 30) {
+    happiness += (state.sectorLevels.education - state.initialStats.sectorLevels.education - 30) * 0.1
+  }
+
+  // Housing decline = homelessness crisis
+  const housingDecline = state.initialStats.sectorLevels.housing - state.sectorLevels.housing
+  if (housingDecline > 0) {
+    happiness -= housingDecline * 0.6
+  } else if (state.sectorLevels.housing > state.initialStats.sectorLevels.housing + 30) {
+    happiness += (state.sectorLevels.housing - state.initialStats.sectorLevels.housing - 30) * 0.15
+  }
+
+  // Security decline = crime waves
+  const securityDecline = state.initialStats.sectorLevels.security - state.sectorLevels.security
+  if (securityDecline > 0) {
+    happiness -= securityDecline * 0.5
+  }
+
+  // Infrastructure decline = power outages, no water, etc.
+  const infrastructureDecline = state.initialStats.sectorLevels.infrastructure - state.sectorLevels.infrastructure
+  if (infrastructureDecline > 0) {
+    happiness -= infrastructureDecline * 0.6
+  }
 
   // Default effect - economic disaster
   if (state.hasDefaulted) {
     happiness -= 25
   }
+
+  // Relationship system: Diplomatic standing affects citizen happiness
+  const relationshipHappiness = calculateRelationshipHappiness(state)
+  happiness += relationshipHappiness
 
   // NATURAL DECAY - happiness slowly decays if you're not actively improving
   // This makes the game challenging - you must constantly work to keep people happy

@@ -5,12 +5,16 @@ import { useParams, useRouter } from 'next/navigation'
 import { countries } from '@/data/countries'
 import ComprehensiveGameUI from '@/components/ComprehensiveGameUI'
 import { Country } from '@/types/country'
+import { loadGameState } from '@/hooks/useGamePersistence'
+import { GameState } from '@/types/game'
 
 export default function GamePage() {
   const params = useParams()
   const router = useRouter()
   const [country, setCountry] = useState<Country | null>(null)
   const [loading, setLoading] = useState(true)
+  const [savedGameState, setSavedGameState] = useState<GameState | null>(null)
+  const [checkingSavedGame, setCheckingSavedGame] = useState(true)
 
   useEffect(() => {
     const countryId = params.countryId as string
@@ -23,6 +27,15 @@ export default function GamePage() {
     }
 
     setCountry(foundCountry)
+
+    // Check for saved game state
+    const savedState = loadGameState(countryId)
+    if (savedState && savedState.currentDay < savedState.totalDays) {
+      setSavedGameState(savedState)
+      console.log('Found saved game, resuming...')
+    }
+    
+    setCheckingSavedGame(false)
     setLoading(false)
   }, [params, router])
 
@@ -32,7 +45,13 @@ export default function GamePage() {
     router.push('/')
   }
 
-  if (loading || !country) {
+  const handleNewGame = () => {
+    // Clear any saved game and start fresh
+    document.cookie = `game_${params.countryId}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`
+    setSavedGameState(null)
+  }
+
+  if (loading || !country || checkingSavedGame) {
     return (
       <div className="h-screen flex items-center justify-center bg-game-darker">
         <div className="text-2xl text-white">Loading...</div>
@@ -40,5 +59,12 @@ export default function GamePage() {
     )
   }
 
-  return <ComprehensiveGameUI country={country} onExit={handleExit} />
+  return (
+    <ComprehensiveGameUI 
+      country={country} 
+      onExit={handleExit}
+      savedGameState={savedGameState}
+      onNewGame={handleNewGame}
+    />
+  )
 }

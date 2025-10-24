@@ -13,10 +13,3 @@ export interface Country {
     happiness: number
   }
 }
-
-export interface WorldEvent {
-  id: string
-  message: string
-  timestamp: Date
-  type: 'world' | 'player'
-}
