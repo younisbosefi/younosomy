@@ -1,0 +1,331 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-game-darker text-gray-100 antialiased;
+  }
+
+  /* Custom Scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-game-darker rounded;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-game-border rounded hover:bg-game-accent/50;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    @apply bg-game-darker;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    @apply bg-game-border rounded hover:bg-game-accent/50;
+  }
+}
+
+@layer utilities {
+  .game-panel {
+    @apply bg-game-dark border border-game-border rounded-lg shadow-xl;
+  }
+
+  .game-button {
+    @apply px-4 py-2 rounded bg-game-accent hover:bg-blue-600 transition-colors duration-200 font-semibold;
+  }
+
+  .game-button-secondary {
+    @apply px-4 py-2 rounded border border-game-border hover:bg-game-dark transition-colors duration-200;
+  }
+
+  .difficulty-easy {
+    @apply bg-green-500/20 border-green-500 text-green-400;
+  }
+
+  .difficulty-medium {
+    @apply bg-yellow-500/20 border-yellow-500 text-yellow-400;
+  }
+
+  .difficulty-hard {
+    @apply bg-red-500/20 border-red-500 text-red-400;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out;
+  }
+
+  @keyframes scaleIn {
+    from {
+      transform: scale(0.9);
+      opacity: 0;
+    }
+    to {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  /* Retro Panel Style */
+  .retro-panel {
+    @apply bg-game-dark border-2 border-game-border rounded;
+    box-shadow:
+      0 0 10px rgba(59, 130, 246, 0.3),
+      inset 0 0 20px rgba(0, 0, 0, 0.5);
+    position: relative;
+  }
+
+  .retro-panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.5), transparent);
+  }
+
+  /* Slide animations */
+  @keyframes slideIn {
+    from {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideUp {
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideDown {
+    from {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  .animate-slide-in {
+    animation: slideIn 0.5s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.5s ease-out;
+  }
+
+  .animate-slide-down {
+    animation: slideDown 0.5s ease-out;
+  }
+
+  /* Grid background animation */
+  .grid-background {
+    background-image:
+      linear-gradient(rgba(59, 130, 246, 0.1) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59, 130, 246, 0.1) 1px, transparent 1px);
+    background-size: 50px 50px;
+    width: 200%;
+    height: 200%;
+  }
+
+  @keyframes gridScroll {
+    0% {
+      transform: translate(0, 0);
+    }
+    100% {
+      transform: translate(-50px, -50px);
+    }
+  }
+
+  .animate-grid-scroll {
+    animation: gridScroll 2s linear infinite;
+  }
+
+  /* Particle effect */
+  .particle {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    background: rgba(59, 130, 246, 0.5);
+    border-radius: 50%;
+    animation: float-particle linear infinite;
+  }
+
+  @keyframes float-particle {
+    0% {
+      transform: translateY(100vh) translateX(0);
+      opacity: 0;
+    }
+    10% {
+      opacity: 1;
+    }
+    90% {
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(-100px) translateX(100px);
+      opacity: 0;
+    }
+  }
+
+  /* Glitch effect */
+  @keyframes glitch {
+    0%, 100% {
+      text-shadow: 0 0 5px rgba(59, 130, 246, 0.8);
+    }
+    25% {
+      text-shadow: -2px 0 5px rgba(239, 68, 68, 0.8);
+    }
+    50% {
+      text-shadow: 2px 0 5px rgba(34, 197, 94, 0.8);
+    }
+    75% {
+      text-shadow: -2px 0 5px rgba(59, 130, 246, 0.8);
+    }
+  }
+
+  .glitch-text {
+    animation: glitch 0.5s infinite;
+  }
+
+  /* Scan line effect */
+  @keyframes scan {
+    0% {
+      top: -100%;
+    }
+    100% {
+      top: 100%;
+    }
+  }
+
+  .scanline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: rgba(59, 130, 246, 0.1);
+    animation: scan 4s linear infinite;
+    pointer-events: none;
+  }
+
+  /* Number ticker animation */
+  @keyframes ticker {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-2px);
+    }
+  }
+
+  .animate-ticker {
+    animation: ticker 0.3s ease-in-out;
+  }
+
+  /* Pulsing glow */
+  @keyframes pulse-glow {
+    0%, 100% {
+      box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+    }
+    50% {
+      box-shadow: 0 0 20px rgba(59, 130, 246, 0.8);
+    }
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  /* Action button hover effects */
+  .action-button {
+    @apply relative overflow-hidden transition-all duration-300;
+  }
+
+  .action-button::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+  }
+
+  .action-button:hover::before {
+    width: 300px;
+    height: 300px;
+  }
+
+  /* Stat bar animations */
+  @keyframes fill-bar {
+    from {
+      width: 0;
+    }
+  }
+
+  .animate-fill-bar {
+    animation: fill-bar 1s ease-out;
+  }
+
+  /* Loading spinner */
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .animate-spin {
+    animation: spin 1s linear infinite;
+  }
+
+  /* Bounce */
+  @keyframes bounce {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+
+  .animate-bounce-slow {
+    animation: bounce 2s ease-in-out infinite;
+  }
+
+  /* Flash effect */
+  @keyframes flash {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+
+  .animate-flash {
+    animation: flash 0.5s ease-in-out;
+  }
+}
